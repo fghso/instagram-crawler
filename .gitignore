@@ -52,6 +52,13 @@ coverage.xml
 # Sphinx documentation
 docs/_build/
 
+# Custom
+CrawledData
+*.log
+*.out
+app.py
+config.xml
+
 
 # =========================
 # Operating System Files
