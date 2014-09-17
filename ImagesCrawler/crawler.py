@@ -1,6 +1,7 @@
 # -*- coding: iso-8859-1 -*-
 
 import os
+import socket
 import time
 import logging
 import urllib2
@@ -22,7 +23,7 @@ class Crawler:
         
     # Retorna o nome que identifica o coletor
     def getName(self):
-        return app.name
+        return gethostname()
 
         
     # Valores de retorno:
@@ -33,7 +34,7 @@ class Crawler:
     def crawl(self, resourceID):
         # Configura logging
         logging.basicConfig(format="%(asctime)s %(levelname)s: %(message)s", datefmt="%d/%m/%Y %H:%M:%S", 
-                            filename="InstagramImagesCrawler[%s].log" % app.name, filemode="w", level=logging.INFO)
+                            filename="InstagramImagesCrawler[%s].log" % getpid(), filemode="w", level=logging.INFO)
 
         # Configura tratamento de exceções
         maxNumberOfRetrys = 10
