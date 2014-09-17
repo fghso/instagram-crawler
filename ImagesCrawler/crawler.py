@@ -34,7 +34,7 @@ class Crawler:
     def crawl(self, resourceID):
         # Configura logging
         logging.basicConfig(format="%(asctime)s %(levelname)s: %(message)s", datefmt="%d/%m/%Y %H:%M:%S", 
-                            filename="InstagramImagesCrawler[%s].log" % os.getpid(), filemode="w", level=logging.INFO)
+                            filename="InstagramImagesCrawler[%s%s].log" % (socket.gethostname(), os.getpid()), filemode="w", level=logging.INFO)
 
         # Configura tratamento de exceções
         maxNumberOfRetrys = 10
