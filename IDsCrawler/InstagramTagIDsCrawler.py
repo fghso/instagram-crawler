@@ -1,18 +1,18 @@
 #!/usr/bin/python
 # -*- coding: iso-8859-1 -*-
 
-import config
-from instagram.client import InstagramAPI
+import time
+import logging
 from datetime import datetime, timedelta
+from instagram.client import InstagramAPI
 from mysql.connector.errors import Error
 from mysql.connector import errorcode
 import mysql.connector
-import time
-import logging
+import app
 
 
 # Constrói objeto da API com as credenciais de acesso
-api = InstagramAPI(client_id=config.clientID, client_secret=config.clientSecret)
+api = InstagramAPI(client_id=app.clientID, client_secret=app.clientSecret)
 
 # O limite de requisições estipulado nos termos de uso do Instagram é de 5000 requisições por hora. 
 # Por garantia o número máximo foi configurado para um valor um pouco abaixo desse limite 
@@ -20,7 +20,7 @@ maxRequestsPerHour = 4990
 
 # Configura logging
 logging.basicConfig(format="%(asctime)s %(levelname)s: %(message)s", datefmt="%d/%m/%Y %H:%M:%S", 
-                    filename="InstagramIDCrawler[%s].log" % config.appName, filemode="w", level=logging.INFO)
+                    filename="InstagramTagIDsCrawler[%s].log" % app.appName, filemode="w", level=logging.INFO)
 requestLoggingInterval = 1000
 
 # Configura tratamento de exceções

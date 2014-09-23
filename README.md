@@ -25,20 +25,20 @@ Para utilizar o coletor genérico, basta executar o servidor (`server.py`) e o cl
 
 Além do endereço e porta de conexão, o arquivo de configuração especifica o banco de dados MySQL que será usado para obter as informações dos recursos a serem coletados. É necessário designar a tabela onde essas informações estão armazenadas. A tabela deve possuir os seguintes campos:
 
-| resourceID  | status | amount | crawler | updatedAt |
-| ----------- | ------ | ------ | ------- | --------- |
+| resource_id  | status | amount | crawler | updated_at |
+| ------------ | ------ | ------ | ------- | ---------- |
 
 Abaixo está um exemplo de como essa tabela pode ser criada:
 
 ```sql
 CREATE TABLE `resources` (
-  `resourcesPK` int(10) NOT NULL AUTO_INCREMENT,
-  `resourceID` varchar(45) NOT NULL,
+  `resources_pk` int(10) NOT NULL AUTO_INCREMENT,
+  `resource_id` varchar(45) NOT NULL,
   `status` tinyint(5) NOT NULL DEFAULT '0',
   `amount` int(10) unsigned NOT NULL DEFAULT '0',
   `crawler` varchar(45) DEFAULT NULL,
-  `updatedAt` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (`resourcesPK`)
+  `updated_at` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`resources_pk`)
 );
 ```
 

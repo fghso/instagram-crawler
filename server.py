@@ -32,24 +32,24 @@ mysqlConnection = mysql.connector.connect(user=cfgDBUser, password=cfgDBPassword
 
 # Define funções de interação com o banco de dados
 def selectResource():
-    query = "SELECT resourceID FROM " + cfgDBTable + " WHERE status IS NULL OR status = 0 ORDER BY rand() LIMIT 1"
+    query = "SELECT resource_id FROM " + cfgDBTable + " WHERE status IS NULL OR status = 0 ORDER BY rand() LIMIT 1"
     cursor = mysqlConnection.cursor()
     cursor.execute(query)
     resource = cursor.fetchone()
     return resource[0] if (resource != None) else resource
     
 def updateResource(resourceID, status, amount, crawler):
-    query = "UPDATE " + cfgDBTable + " SET status = %s, amount = %s, crawler = %s WHERE resourceID = %s"
+    query = "UPDATE " + cfgDBTable + " SET status = %s, amount = %s, crawler = %s WHERE resource_id = %s"
     cursor = mysqlConnection.cursor()
     cursor.execute(query, (status, amount, crawler, resourceID))
     mysqlConnection.commit()
     
 def collectedResourcesPercent():
-    query = "SELECT count(resourceID) FROM " + cfgDBTable
+    query = "SELECT count(resource_id) FROM " + cfgDBTable
     cursor = mysqlConnection.cursor()
     cursor.execute(query)
     resourcesTotal = float(cursor.fetchone()[0])
-    query = "SELECT count(resourceID) FROM " + cfgDBTable + " WHERE status IS NOT NULL AND status != 0 AND status != 1"
+    query = "SELECT count(resource_id) FROM " + cfgDBTable + " WHERE status IS NOT NULL AND status != 0 AND status != 1"
     cursor = mysqlConnection.cursor()
     cursor.execute(query)
     resourcesCollected = float(cursor.fetchone()[0])
