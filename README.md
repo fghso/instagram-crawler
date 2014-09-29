@@ -1,7 +1,7 @@
 instagram-crawler (camps-crawler)
 =====
 
-Os arquivos python no diretório raiz deste projeto definem o coletor genérico, denominado *camps-crawler*. Os demais diretórios contêm arquivos referentes à coleta de dados específica do Instagram, cujo projeto foi denominado *instagram-crawler*. Parte da coleta do Instagram foi feita usando esquemas anteriores ao coletor genérico, enquanto outra parte usou a versão mais atual.
+Os arquivos python no diretório raiz deste projeto definem o coletor genérico, denominado *camps-crawler*. Os demais diretórios contêm arquivos referentes à coleta de dados específica do Instagram, cujo projeto foi denominado *instagram-crawler*.
 
 Para utilizar o coletor genérico, basta executar o servidor (`server.py`) e o cliente (`client.py`) em qualquer máquina. O servidor espera receber como entrada o caminho para um arquivo de configuração XML, que deve estar de acordo com o formato abaixo:
 
@@ -38,7 +38,8 @@ CREATE TABLE `resources` (
   `amount` int(10) unsigned NOT NULL DEFAULT '0',
   `crawler` varchar(45) DEFAULT NULL,
   `updated_at` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (`resources_pk`)
+  PRIMARY KEY (`resources_pk`),
+  UNIQUE KEY `resource_id_UNIQUE` (`resource_id`)
 );
 ```
 

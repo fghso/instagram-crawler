@@ -56,7 +56,7 @@ while (True):
 
     try:
         # Executa requisição na API para obter mídias populares
-        popularMedia = api.media_popular(count=64)        
+        popularMedia = api.media_popular(count=60)        
     except:
         # Caso o número de tentativas não tenha ultrapassado o máximo,
         # experimenta aguardar um certo tempo antes da próxima tentativa 
