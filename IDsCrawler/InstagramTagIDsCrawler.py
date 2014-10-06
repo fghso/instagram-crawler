@@ -56,7 +56,7 @@ while (True):
 
     try:
         # Executa requisição na API para obter mídias recentes com a tag selfie
-        selfieRecentMedia, nextSelfieRecentMediaPage = api.tag_recent_media(count=30, tag_name="selfie")
+        selfieRecentMedia, nextSelfieRecentMediaPage = api.tag_recent_media(count=35, tag_name="selfie")
     except:
         # Caso o número de tentativas não tenha ultrapassado o máximo,
         # experimenta aguardar um certo tempo antes da próxima tentativa 

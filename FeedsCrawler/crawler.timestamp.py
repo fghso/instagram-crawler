@@ -6,6 +6,8 @@ import json
 import time
 import logging
 from datetime import datetime
+from datetime import timedelta
+import calendar
 from instagram.client import InstagramAPI
 from instagram.bind import InstagramAPIError
 import app
@@ -35,6 +37,10 @@ class Crawler:
         # Configura diretório base para armazenamento
         feedsDataDir = "../../CrawledData/Feeds"
         
+        # Configura data máxima de mídias a coletar
+        timeInterval = datetime.utcnow() - timedelta(90)
+        minTimestamp = calendar.timegm(timeInterval.utctimetuple())
+        
         # Executa coleta
         firsRequestTime = datetime.now()
         while(True):
@@ -55,7 +61,7 @@ class Crawler:
             
                 try:
                     # Executa requisição na API para obter mídias do feed do usuário
-                    userRecentMedia, nextUserRecentMediaPage = api.user_recent_media(count=30, user_id=resourceID, max_id=maxID, return_json=True)
+                    userRecentMedia, nextUserRecentMediaPage = api.user_recent_media(count=35, user_id=resourceID, max_id=maxID, min_timestamp = minTimestamp, return_json=True)
                 except InstagramAPIError as err:
                     # Se o usuário tiver o perfil privado, captura exceção e marca erro no banco de dados
                     if err.error_type == "APINotAllowedError":
@@ -81,13 +87,5 @@ class Crawler:
                     output = open(os.path.join(dir, filename), "w")
                     json.dump(userRecentMedia, output)
                     output.close()
-                    
-                    # Verifica a data da mídia e interrompe a coleta caso
-                    # esteja além do intervalo de tempo especificado
-                    createdTime = datetime.fromtimestamp(float(userRecentMedia[-1]["created_time"]))
-                    elapsedTime = datetime.utcnow() - createdTime
-                    
-                    if (elapsedTime.days >= 90):
-                        return (2, j)
     
             return (2, j)

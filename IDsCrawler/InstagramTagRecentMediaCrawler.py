@@ -64,8 +64,8 @@ while(True):
     
     try:
         # Executa requisição na API para obter dados do usuário
-        selfieRecentMedia, nextSelfieRecentMediaPage = api.tag_recent_media(count=30, tag_name="selfie", return_json=True, max_tag_id=maxID)
-        #selfieRecentMedia, nextSelfieRecentMediaPage = api.tag_recent_media(count=30, tag_name="selfie", return_json=True)
+        selfieRecentMedia, nextSelfieRecentMediaPage = api.tag_recent_media(count=35, tag_name="selfie", return_json=True, max_tag_id=maxID)
+        #selfieRecentMedia, nextSelfieRecentMediaPage = api.tag_recent_media(count=35, tag_name="selfie", return_json=True)
     except:
         # Caso o número de tentativas não tenha ultrapassado o máximo,
         # Experimenta aguardar um certo tempo antes da próxima tentativa

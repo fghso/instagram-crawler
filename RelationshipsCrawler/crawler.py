@@ -51,7 +51,7 @@ class Crawler:
                     nextCursor = urlParts[1].split("=")[1]
             
                 try:
-                    follows, nextFollowsPage = api.user_follows(user_id=resourceID, return_json=True, count=30, cursor=nextCursor)
+                    follows, nextFollowsPage = api.user_follows(user_id=resourceID, return_json=True, count=35, cursor=nextCursor)
                 except InstagramAPIError as err:
                     if (err.error_type == "APINotAllowedError"):
                         status = -2
@@ -114,7 +114,7 @@ class Crawler:
                         nextCursor = urlParts[1].split("=")[1]
                 
                     try:
-                        followedby, nextFollowedByPage = api.user_followed_by(user_id=resourceID, return_json=True, count=30, cursor=nextCursor)
+                        followedby, nextFollowedByPage = api.user_followed_by(user_id=resourceID, return_json=True, count=35, cursor=nextCursor)
                     except Exception as err:
                         # Caso o número de tentativas não tenha ultrapassado o máximo,
                         # experimenta aguardar um certo tempo antes da próxima tentativa 

@@ -23,7 +23,7 @@ cfgBufsize = int(config.findtext("./connection/bufsize"))
 # Cria uma instância do coletor
 crawlerObj = crawler.Crawler()
 
-# Recebe ID do servidor
+# Recebe ID e parâmetros do servidor
 processID = os.getpid()
 server = socket.socket()
 server.connect((cfgAddress, cfgPort))
@@ -31,6 +31,7 @@ server.send(json.dumps({"command": "GET_LOGIN", "name": crawlerObj.getName(), "p
 response = server.recv(cfgBufsize)
 message = json.loads(response)
 clientID = message["clientid"]
+clientParams = message["clientparams"]
 print "Conectado ao servidor com o ID: %s " % clientID
 
 # Envia comando para receber um ID de recurso
@@ -47,7 +48,7 @@ while (True):
         if (command == "GIVE_ID"):
             # Repassa o ID para o coletor
             resourceID = message["resourceid"]
-            crawlerResponse = crawlerObj.crawl(resourceID)
+            crawlerResponse = crawlerObj.crawl(resourceID, **clientParams)
             
             # Comunica ao servidor que a coleta do recurso foi finalizada
             server.send(json.dumps({"command": "DONE_ID", "clientid": clientID, "resourceid": resourceID, "status": crawlerResponse[0], "amount": crawlerResponse[1]}))
