@@ -39,11 +39,9 @@ message = json.loads(response)
 clientID = message["clientid"]
 
 # Configura logging
-logFile = None
 if (not args.no_logging):
-    logFile = "client%s[%s%s].log" % (clientID, cfgAddress, cfgPort)
-    logging.basicConfig(format="%(asctime)s %(levelname)s: %(message)s", datefmt="%d/%m/%Y %H:%M:%S", 
-                        filename=logFile, filemode="w", level=logging.INFO)
+    logging.basicConfig(format="%(asctime)s %(module)s %(levelname)s: %(message)s", datefmt="%d/%m/%Y %H:%M:%S", 
+                        filename="client%s[%s%s].log" % (clientID, cfgAddress, cfgPort), filemode="w", level=logging.INFO)
     logging.info("Conectado ao servidor com o ID %s " % clientID)
 if (args.verbose): print "Conectado ao servidor com o ID %s " % clientID
 
@@ -61,7 +59,7 @@ while (True):
             # Repassa o ID e parâmetros para o coletor
             resourceID = message["resourceid"]
             parameters = message["params"]
-            crawlerResponse = crawlerObj.crawl(resourceID, logFile, **parameters)
+            crawlerResponse = crawlerObj.crawl(resourceID, args.no_logging, **parameters)
             
             # Comunica ao servidor que a coleta do recurso foi finalizada
             server.send(json.dumps({"command": "DONE_ID", "clientid": clientID, "resourceid": resourceID, "status": crawlerResponse[0], "amount": crawlerResponse[1]}))

@@ -17,7 +17,7 @@ import mysql.connector
 # Dicionário que guarda uma lista de informações sobre cada cliente:
 #   [nome do cliente, endereço de rede, número do processo (PID), 
 #   ID do recurso que está sendo coletado, quantidade de recursos já 
-#   coletados pelo cliente, data da última atualização]
+#   coletados pelo cliente, data de início da coleta e data da última atualização]
 clientsInfo = {} 
 
 # Armazena uma referência para a thread que executa o cliente
@@ -89,7 +89,7 @@ class ServerHandler(SocketServer.BaseRequestHandler):
                     #clientAddress = (socket.gethostbyaddr(client.getpeername()[0])[0], client.getpeername()[1])
                     clientAddress = client.getpeername()
                     clientPid = message["processid"]
-                    clientsInfo[clientID] = [clientName, clientAddress, clientPid, None, 0, None]
+                    clientsInfo[clientID] = [clientName, clientAddress, clientPid, None, 0, datetime.now(), None]
                     clientsThreads[clientID] = (threading.current_thread(), threading.Event())
                     client.send(json.dumps({"command": "GIVE_LOGIN", "clientid": clientID}))
                     if (not args.no_logging): logging.info("Novo cliente conectado: %d" % clientID)
@@ -116,7 +116,7 @@ class ServerHandler(SocketServer.BaseRequestHandler):
                         else:
                             clientsInfo[clientID][3] = resourceID
                             clientsInfo[clientID][4] += 1
-                            clientsInfo[clientID][5] = datetime.today()
+                            clientsInfo[clientID][6] = datetime.now()
                             self.updateResource(resourceID, 1, 0, clientName)
                             client.send(json.dumps({"command": "GIVE_ID", "resourceid": str(resourceID), "params": params.getParamsDict()}))
                     # Se o cliente houver sido removido, sinaliza para que ele termine
@@ -128,7 +128,6 @@ class ServerHandler(SocketServer.BaseRequestHandler):
                     
                 elif (command == "DONE_ID"):
                     clientID = int(message["clientid"])
-                    clientStopEvent = clientsThreads[clientID][1]
                     clientName = clientsInfo[clientID][0]
                     clientResourceID = message["resourceid"]
                     clientStatus = message["status"]
@@ -145,8 +144,9 @@ class ServerHandler(SocketServer.BaseRequestHandler):
                             clientPid = clientInfo[2]
                             clientResourceID = clientInfo[3]
                             clientAmount = clientInfo[4]
-                            clientUpdatedAt = clientInfo[5]
-                            elapsedTime = datetime.today() - clientUpdatedAt
+                            clientStartTime = clientInfo[5]
+                            clientUpdatedAt = clientInfo[6]
+                            elapsedTime = datetime.now() - clientStartTime
                             elapsedMinSec = divmod(elapsedTime.seconds, 60)
                             elapsedHours = (elapsedMinSec[0] // 60,)
                             status += "  #%d %s (%s:%s/%s): %s desde %s [%d coletado(s) em %s]\n" % (clientID, clientName, clientAddress[0], clientAddress[1], clientPid, clientResourceID, clientUpdatedAt.strftime("%d/%m/%Y %H:%M:%S"), clientAmount, "%02dh%02dm%02ds" % (elapsedHours + elapsedMinSec))
