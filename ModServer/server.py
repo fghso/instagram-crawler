@@ -113,7 +113,7 @@ class ServerHandler(SocketServer.BaseRequestHandler):
                             clientsInfo[clientID][4] += 1
                             clientsInfo[clientID][6] = datetime.now()
                             self.updateResource(resourceID, 1, 0, clientName)
-                            client.send(json.dumps({"command": "GIVE_ID", "resourceid": str(resourceID), "params": params.getParamsDict()}))
+                            client.send(json.dumps({"command": "GIVE_ID", "resourceid": str(resourceID), "params": params.getParams()}))
                     # Se o cliente houver sido removido, sinaliza para que ele termine
                     else:
                         client.send(json.dumps({"command": "KILL"}))
@@ -126,8 +126,8 @@ class ServerHandler(SocketServer.BaseRequestHandler):
                     clientName = clientsInfo[clientID][0]
                     clientResourceID = message["resourceid"]
                     clientStatus = message["status"]
-                    clientAmount = message["amount"]
-                    self.updateResource(clientResourceID, clientStatus, clientAmount, clientName)
+                    clientAnnotation = message["annotation"]
+                    self.updateResource(clientResourceID, clientStatus, clientAnnotation, clientName)
                     client.send(json.dumps({"command": "DID_OK"}))
                     
                 elif (command == "GET_STATUS"):
@@ -198,16 +198,16 @@ class ServerHandler(SocketServer.BaseRequestHandler):
             
     # Funções de interação com o banco de dados
     def selectResource(self):
-        query = "SELECT resource_id FROM " + self.server.cfg.DBTable + " WHERE status IS NULL OR status = 0 ORDER BY rand() LIMIT 1"
+        query = "SELECT resource_id FROM " + self.server.cfg.DBTable + " WHERE status IS NULL OR status = 0 ORDER BY resources_pk LIMIT 1"
         cursor = self.mysqlConnection.cursor()
         cursor.execute(query)
         resource = cursor.fetchone()
         return resource[0] if (resource != None) else resource
         
-    def updateResource(self, resourceID, status, amount, crawler):
-        query = "UPDATE " + self.server.cfg.DBTable + " SET status = %s, amount = %s, crawler = %s WHERE resource_id = %s"
+    def updateResource(self, resourceID, status, annotation, crawler):
+        query = "UPDATE " + self.server.cfg.DBTable + " SET status = %s, annotation = %s, crawler = %s WHERE resource_id = %s"
         cursor = self.mysqlConnection.cursor()
-        cursor.execute(query, (status, amount, crawler, resourceID))
+        cursor.execute(query, (status, annotation, crawler, resourceID))
         self.mysqlConnection.commit()
         
     def collectedResourcesPercent(self):
@@ -247,7 +247,7 @@ crawlerParameters = CrawlerParams()
 
 # Configura logging
 if (not args.no_logging):
-    logging.basicConfig(format="%(asctime)s %(levelname)s: %(message)s", datefmt="%d/%m/%Y %H:%M:%S", 
+    logging.basicConfig(format="%(asctime)s %(module)s %(levelname)s: %(message)s", datefmt="%d/%m/%Y %H:%M:%S", 
                         filename="server[%s%s].log" % (configuration.Address, configuration.Port), filemode="w", level=logging.INFO)
 
 # Inicia servidor
