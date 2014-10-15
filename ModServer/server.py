@@ -25,10 +25,12 @@ clientsInfo = {}
 # e um evento que permite interromper sua execução
 clientsThreads = {}
 
-# Define próximo ID a ser passado para um novo cliente,
-# bem como um lock para alteração dessa variável
+# Define próximo ID a ser passado para um novo cliente
 nextFreeID = 1
+
+# Define locks para regiões críticas do código
 nextFreeIDLock = threading.Lock()
+getIDLock = threading.Lock()
 
 
 # ==================== Classes ====================
@@ -57,6 +59,7 @@ class ServerHandler(SocketServer.BaseRequestHandler):
         cfg = self.server.cfg
         params = self.server.params
         client = self.request
+        clientID = 0
         running = True
         while (running):
             try: 
@@ -64,7 +67,7 @@ class ServerHandler(SocketServer.BaseRequestHandler):
                 
                 # Se o cliente houver fechado a conexão do outro lado, finaliza a execução da thread
                 if (not response): 
-                    clientID = int(threading.current_thread().name)
+                    #clientID = int(threading.current_thread().name)
                     if (not args.no_logging): logging.info("Cliente %d desconectou-se." % clientID)
                     if (args.verbose): print "Cliente %d desconectou-se." % clientID
                     running = False
@@ -79,7 +82,7 @@ class ServerHandler(SocketServer.BaseRequestHandler):
                         global nextFreeID
                         clientID = nextFreeID
                         nextFreeID += 1
-                    threading.current_thread().name = clientID
+                    #threading.current_thread().name = clientID
                     clientName = message["name"]
                     #clientAddress = (socket.gethostbyaddr(client.getpeername()[0])[0], client.getpeername()[1])
                     clientAddress = client.getpeername()
@@ -91,14 +94,22 @@ class ServerHandler(SocketServer.BaseRequestHandler):
                     if (args.verbose): print "Novo cliente conectado: %d" % clientID
                 
                 elif (command == "GET_ID"):
-                    clientID = message["clientid"]
+                    #clientID = message["clientid"]
                     clientStopEvent = clientsThreads[clientID][1]
                     # Se o cliente não houver sido removido, verifica disponibilidade de recurso para coleta
                     if (not clientStopEvent.is_set()):
                         clientName = clientsInfo[clientID][0]
-                        resourceID = self.selectResource()
+                        with getIDLock:
+                            resourceID = self.selectResource()
+                            if (resourceID): self.updateResource(resourceID, 1, 0, clientName)
+                        # Se houver recurso disponível, envia o ID para o cliente
+                        if (resourceID):
+                            clientsInfo[clientID][3] = resourceID
+                            clientsInfo[clientID][4] += 1
+                            clientsInfo[clientID][6] = datetime.now()
+                            client.send(json.dumps({"command": "GIVE_ID", "resourceid": str(resourceID), "params": params.getParams()}))
                         # Se não houver mais recursos para coletar, finaliza cliente
-                        if (resourceID == None):
+                        else:
                             client.send(json.dumps({"command": "FINISH"}))
                             del clientsInfo[clientID]
                             running = False
@@ -107,22 +118,16 @@ class ServerHandler(SocketServer.BaseRequestHandler):
                                 self.server.shutdown()
                                 if (not args.no_logging): logging.info("Tarefa concluida, servidor finalizado.")
                                 if (args.verbose): print "Tarefa concluida, servidor finalizado."
-                        # Envia ID do recurso para o cliente
-                        else:
-                            clientsInfo[clientID][3] = resourceID
-                            clientsInfo[clientID][4] += 1
-                            clientsInfo[clientID][6] = datetime.now()
-                            self.updateResource(resourceID, 1, 0, clientName)
-                            client.send(json.dumps({"command": "GIVE_ID", "resourceid": str(resourceID), "params": params.getParams()}))
                     # Se o cliente houver sido removido, sinaliza para que ele termine
                     else:
                         client.send(json.dumps({"command": "KILL"}))
+                        del clientsInfo[clientID]
                         if (not args.no_logging): logging.info("Cliente %d removido." % clientID)
                         if (args.verbose): print "Cliente %d removido." % clientID
                         running = False
                     
                 elif (command == "DONE_ID"):
-                    clientID = int(message["clientid"])
+                    #clientID = int(message["clientid"])
                     clientName = clientsInfo[clientID][0]
                     clientResourceID = message["resourceid"]
                     clientStatus = message["status"]
@@ -133,7 +138,8 @@ class ServerHandler(SocketServer.BaseRequestHandler):
                 elif (command == "GET_STATUS"):
                     status = "\n" + (" Status (%s:%s/%s) " % (cfg.Address, cfg.Port, os.getpid())).center(50, ':') + "\n\n"
                     if (clientsInfo): 
-                        for (clientID, clientInfo) in clientsInfo.iteritems():
+                        for (ID, clientInfo) in clientsInfo.iteritems():
+                            clientAlive = (" " if clientsThreads[ID][0].is_alive() else "+")
                             clientName = clientInfo[0]
                             clientAddress = clientInfo[1]
                             clientPid = clientInfo[2]
@@ -143,8 +149,8 @@ class ServerHandler(SocketServer.BaseRequestHandler):
                             clientUpdatedAt = clientInfo[6]
                             elapsedTime = datetime.now() - clientStartTime
                             elapsedMinSec = divmod(elapsedTime.seconds, 60)
-                            elapsedHours = (elapsedMinSec[0] // 60,)
-                            status += "  #%d %s (%s:%s/%s): %s desde %s [%d coletado(s) em %s]\n" % (clientID, clientName, clientAddress[0], clientAddress[1], clientPid, clientResourceID, clientUpdatedAt.strftime("%d/%m/%Y %H:%M:%S"), clientAmount, "%02dh%02dm%02ds" % (elapsedHours + elapsedMinSec))
+                            elapsedHoursMin = divmod(elapsedMinSec[0], 60)
+                            status += "  #%d %s %s (%s:%s/%s): %s desde %s [%d coletado(s) em %s]\n" % (ID, clientAlive, clientName, clientAddress[0], clientAddress[1], clientPid, clientResourceID, clientUpdatedAt.strftime("%d/%m/%Y %H:%M:%S"), clientAmount, "%02dh%02dm%02ds" % (elapsedHoursMin[0],  elapsedHoursMin[1], elapsedMinSec[1]))
                     else:
                         status += "  Nenhum cliente conectado no momento.\n"
                     status += "\n" + (" Status (%.1f%% coletado) " % (self.collectedResourcesPercent())).center(50, ':') + "\n"
@@ -152,33 +158,38 @@ class ServerHandler(SocketServer.BaseRequestHandler):
                     running = False
                     
                 elif (command == "RM_CLIENT"):
-                    clientID = int(message["clientid"])
-                    if (clientID in clientsThreads):
+                    ID = int(message["clientid"])
+                    if (ID in clientsThreads):
                         # Se a thread estava ativa, sinaliza para que ela termine de maneira segura e aguarda
-                        if (clientsThreads[clientID][0].is_alive()):
-                            clientsThreads[clientID][1].set()
-                            while (clientsThreads[clientID][0].is_alive()): pass
+                        if (clientsThreads[ID][0].is_alive()):
+                            clientsThreads[ID][1].set()
+                            while (clientsThreads[ID][0].is_alive()): pass
                         # Se a thread não estava ativa, marca o último ID solicitado como não 
-                        # coletado para que a coleta  seja refeita, garantindo a consistência
+                        # coletado para que a coleta seja refeita, garantindo a consistência
                         else:
-                            clientName = clientsInfo[clientID][0]
-                            clientResourceID = clientsInfo[clientID][3]
-                            self.updateResource(clientResourceID, 0, 0, clientName)
-                            if (not args.no_logging): logging.info("Cliente %d removido." % clientID)
-                            if (args.verbose): print "Cliente %d removido." % clientID
-                        del clientsInfo[clientID]
-                        del clientsThreads[clientID]
+                            clientName = clientsInfo[ID][0]
+                            clientResourceID = clientsInfo[ID][3]
+                            self.updateResource(clientResourceID, 0, None, clientName)
+                            if (not args.no_logging): logging.info("Cliente %d removido." % ID)
+                            if (args.verbose): print "Cliente %d removido." % ID
+                        del clientsThreads[ID]
                         client.send(json.dumps({"command": "RM_OK"}))
                     else:
                         client.send(json.dumps({"command": "RM_ERROR", "reason": "ID inexistente"}))
                     running = False
                         
                 elif (command == "SHUTDOWN"):
-                    # Sinaliza para que todos os clientes terminem e então desliga o servidor
-                    if (not args.no_logging): logging.info("Removendo todos os clientes para desligar...")                    
+                    # Sinaliza para que todos os clientes ativos terminem e marca recursos dos clientes inativos
+                    # como não coletados. Em seguida, desliga o servidor
+                    if (not args.no_logging): logging.info("Removendo todos os clientes para desligar...")
                     if (args.verbose): print "Removendo todos os clientes para desligar..."
-                    for clientID in clientsThreads.keys():
-                        clientsThreads[clientID][1].set()
+                    for ID in clientsThreads.keys():
+                        if (clientsThreads[ID][0].is_alive()):
+                            clientsThreads[ID][1].set()
+                        else:
+                            clientName = clientsInfo[ID][0]
+                            clientResourceID = clientsInfo[ID][3]
+                            self.updateResource(clientResourceID, 0, None, clientName)
                     while (threading.active_count() > 2): pass
                     self.server.shutdown()    
                     client.send(json.dumps({"command": "SD_OK"}))
@@ -187,7 +198,7 @@ class ServerHandler(SocketServer.BaseRequestHandler):
                     running = False
             
             except Exception as error:
-                clientID = int(threading.current_thread().name)
+                #clientID = int(threading.current_thread().name)
                 if (not args.no_logging): logging.exception("Excecao no processamento da requisicao do cliente %d. Thread '%s' abortada." % (clientID, threading.current_thread().name))
                 if (args.verbose): 
                     print "ERRO: %s" % str(error)
@@ -202,7 +213,7 @@ class ServerHandler(SocketServer.BaseRequestHandler):
         cursor = self.mysqlConnection.cursor()
         cursor.execute(query)
         resource = cursor.fetchone()
-        return resource[0] if (resource != None) else resource
+        return resource[0] if (resource) else resource
         
     def updateResource(self, resourceID, status, annotation, crawler):
         query = "UPDATE " + self.server.cfg.DBTable + " SET status = %s, annotation = %s, crawler = %s WHERE resource_id = %s"

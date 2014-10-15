@@ -4,36 +4,33 @@
 import sys
 import socket
 import json
-import xml.etree.ElementTree as ET
 import argparse
+import common
 
 
 # Analisa argumentos
-parser = argparse.ArgumentParser(add_help=False)
+parser = argparse.ArgumentParser(add_help=False, description="Send action commands to be performed by the server or retrieve status information. If none of the optional arguments are given, basic status information is shown.")
 parser.add_argument("configFilePath")
-parser.add_argument("-h", "--help", action="help", help="mostra esta mensagem de ajuda e sai")
-parser.add_argument("-s", "--status", action="store_true", help="obtem o status atual de todos os clientes conectados ao servidor")
-parser.add_argument("-r", "--remove", metavar="clientID", help="remove da lista do servidor o cliente com o ID especificado")
-parser.add_argument("--shutdown", action="store_true", help="remove todos os clientes da lista do servidor e o desliga")
+parser.add_argument("-h", "--help", action="help", help="show this help message and exit")
+parser.add_argument("-e", "--extended", action="store_true", help="show extended status information")
+parser.add_argument("-r", "--remove", metavar="clientID", help="remove the client specified by the given ID from the server's list")
+parser.add_argument("--shutdown", action="store_true", help="remove all clients from the server's list and shutdown server")
 args = parser.parse_args()
 
 # Carrega configurações
-config = ET.parse(args.configFilePath)
-cfgAddress = config.findtext("./connection/address")
-cfgPort = int(config.findtext("./connection/port"))
-cfgBufsize = int(config.findtext("./connection/bufsize"))
+config = common.ConfigurationHandler(args.configFilePath).getConfig()
 
 # Conecta-se ao servidor
 try:
     server = socket.socket()
-    server.connect((cfgAddress, cfgPort))
+    server.connect((config["global"]["connection"]["address"], config["global"]["connection"]["port"]))
 except: 
-    sys.exit("ERRO: Nao foi possivel conectar-se ao servidor em %s:%s." % (cfgAddress, cfgPort))
+    sys.exit("ERRO: Nao foi possivel conectar-se ao servidor em %s:%s." % (config["global"]["connection"]["address"], config["global"]["connection"]["port"]))
 
 # Remove cliente
 if (args.remove):
     server.send(json.dumps({"command": "RM_CLIENT", "clientid": args.remove}))
-    response = server.recv(cfgBufsize)
+    response = server.recv(config["global"]["connection"]["bufsize"])
     server.shutdown(socket.SHUT_RDWR)
     server.close()
     
@@ -49,7 +46,7 @@ if (args.remove):
 # Desliga servidor
 elif (args.shutdown):   
     server.send(json.dumps({"command": "SHUTDOWN"}))
-    response = server.recv(cfgBufsize)
+    response = server.recv(config["global"]["connection"]["bufsize"])
     server.shutdown(socket.SHUT_RDWR)
     server.close()
     
@@ -63,7 +60,7 @@ elif (args.shutdown):
 # Imprime status
 else:
     server.send(json.dumps({"command": "GET_STATUS"}))
-    response = server.recv(cfgBufsize)
+    response = server.recv(config["global"]["connection"]["bufsize"])
     server.shutdown(socket.SHUT_RDWR)
     server.close()
     

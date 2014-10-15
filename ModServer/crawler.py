@@ -191,8 +191,7 @@ class Crawler:
                 who = commentDict['from']
                 userid = who['id']
                 username = who['username']
-                #query = 'insert INTO ' + params['database']['table'] + ' (resource_id, annotation) values (%s,%s)'
-                
+                '''
                 query = "INSERT INTO `%s` (resource_id,annotation) VALUES (%s,'%s') ON DUPLICATE KEY UPDATE resources_pk=resources_pk;"%\
                                             (params['database']['table'],userid, username)
                 try:
@@ -201,14 +200,15 @@ class Crawler:
                     logging.error('Error while executing query [%s]: [%s]'%(query,str(e)))
                     raise
                 '''
+                
+                query = 'insert INTO ' + params['database']['table'] + ' (resource_id, annotation) values (%s,%s)'
                 try:
                     cursor.execute(query, (uid, username))
-                    mysqlConnection.commit()
                 except mysql.connector.Error as err:
                     if err.errno != errorcode.ER_DUP_ENTRY:
+                        logging.error('Error while inserting user into database: [%s]'%(str(err.msg)))
                         raise
-                        #logging.exception("Erro na execução da query.")
-                '''
+
             try:    
                 mysqlConnection.commit()
             except Exception, e:

@@ -5,26 +5,25 @@ import sys
 import os
 import socket
 import json
-import xml.etree.ElementTree as ET
 from datetime import datetime
 import logging
 import argparse
+from common import *
 import crawler
 
 
 # Analisa argumentos
 parser = argparse.ArgumentParser(add_help=False)
 parser.add_argument("configFilePath")
-parser.add_argument("-h", "--help", action="help", help="mostra esta mensagem de ajuda e sai")
-parser.add_argument("-v", "--verbose", action="store_true", help="exibe as mensagens de log na tela")
-parser.add_argument("--no-logging", action="store_true", help="desabilita logging")
+parser.add_argument("-h", "--help", action="help", help="show this help message and exit")
+parser.add_argument("-v", "--verbose", type=str2bool, metavar="on/off", help="enable/disable log messages on screen")
+parser.add_argument("-g", "--logging", type=str2bool, metavar="on/off", help="enable/disable logging on file")
 args = parser.parse_args()
 
 # Carrega configurações
-config = ET.parse(args.configFilePath)
-cfgAddress = config.findtext("./connection/address")
-cfgPort = int(config.findtext("./connection/port"))
-cfgBufsize = int(config.findtext("./connection/bufsize"))
+config = ConfigurationHandler(args.configFilePath).getConfig()
+if (args.verbose is not None): config["client"]["verbose"] = args.verbose
+if (args.logging is not None): config["client"]["logging"] = args.logging
 
 # Cria uma instância do coletor
 crawlerObj = crawler.Crawler()
@@ -32,24 +31,24 @@ crawlerObj = crawler.Crawler()
 # Recebe ID do servidor
 processID = os.getpid()
 server = socket.socket()
-server.connect((cfgAddress, cfgPort))
+server.connect((config["global"]["connection"]["address"], config["global"]["connection"]["port"]))
 server.send(json.dumps({"command": "GET_LOGIN", "name": crawlerObj.getName(), "processid": processID}))
-response = server.recv(cfgBufsize)
+response = server.recv(config["global"]["connection"]["bufsize"])
 message = json.loads(response)
 clientID = message["clientid"]
 
 # Configura logging
-if (not args.no_logging):
+if (config["client"]["logging"]):
     logging.basicConfig(format="%(asctime)s %(module)s %(levelname)s: %(message)s", datefmt="%d/%m/%Y %H:%M:%S", 
-                        filename="client%s[%s%s].log" % (clientID, cfgAddress, cfgPort), filemode="w", level=logging.INFO)
+                        filename="client%s[%s%s].log" % (clientID, config["global"]["connection"]["address"], config["global"]["connection"]["port"]), filemode="w", level=logging.DEBUG)
     logging.info("Conectado ao servidor com o ID %s " % clientID)
-if (args.verbose): print "Conectado ao servidor com o ID %s " % clientID
+if (config["client"]["verbose"]): print "Conectado ao servidor com o ID %s " % clientID
 
 # Executa a coleta
 server.send(json.dumps({"command": "GET_ID", "clientid": clientID}))
 while (True):
     try:
-        response = server.recv(cfgBufsize)
+        response = server.recv(config["global"]["connection"]["bufsize"])
 
         # Extrai comando recebido do servidor
         message = json.loads(response)
@@ -59,7 +58,7 @@ while (True):
             # Repassa o ID e parâmetros para o coletor
             resourceID = message["resourceid"]
             parameters = message["params"]
-            crawlerResponse = crawlerObj.crawl(resourceID, args.no_logging, **parameters)
+            crawlerResponse = crawlerObj.crawl(resourceID, config["client"]["logging"], **parameters)
             
             # Comunica ao servidor que a coleta do recurso foi finalizada
             server.send(json.dumps({"command": "DONE_ID", "clientid": clientID, "resourceid": resourceID, "status": crawlerResponse[0], "amount": crawlerResponse[1]}))
@@ -69,18 +68,18 @@ while (True):
             server.send(json.dumps({"command": "GET_ID", "clientid": clientID}))
             
         elif (command == "FINISH"):
-            if (not args.no_logging): logging.info("Tarefa concluida, cliente finalizado.")
-            if (args.verbose): print "Tarefa concluida, cliente finalizado."
+            if (config["client"]["logging"]): logging.info("Tarefa concluida, cliente finalizado.")
+            if (config["client"]["verbose"]): print "Tarefa concluida, cliente finalizado."
             break
             
         elif (command == "KILL"):
-            if (not args.no_logging): logging.info("Cliente removido pelo servidor.")
-            if (args.verbose): print "Cliente removido pelo servidor."
+            if (config["client"]["logging"]): logging.info("Cliente removido pelo servidor.")
+            if (config["client"]["verbose"]): print "Cliente removido pelo servidor."
             break
             
     except Exception as error:
-        if (not args.no_logging): logging.exception("Excecao no processamento dos dados. Execucao abortada.")
-        if (args.verbose):
+        if (config["client"]["logging"]): logging.exception("Excecao no processamento dos dados. Execucao abortada.")
+        if (config["client"]["verbose"]):
             print "ERRO: %s" % str(error)
             excType, excObj, excTb = sys.exc_info()
             fileName = os.path.split(excTb.tb_frame.f_code.co_filename)[1]

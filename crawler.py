@@ -17,8 +17,8 @@ class Crawler:
     # tipo de recurso que está sendo coletado. No caso trivial, ela usualmente é 1 após uma coleta bem sucedida. Além
     # do ID do recurso, o método recebe o valor da opção de logging configurada no cliente (True ou False) e pode,
     # opcionalmente, receber também parâmetros enviados pelo servidor
-    def crawl(self, resourceID, noLogging, **params):
-        if (not noLogging):
+    def crawl(self, resourceID, loggingActive, **params):
+        if (loggingActive):
             logging.info("Recurso recebido para coleta: %s" % resourceID)
             logging.info("Parametros: %s" % params)
 
