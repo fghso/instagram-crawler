@@ -8,7 +8,7 @@ import argparse
 import common
 
 
-# Analisa argumentos
+# Analyse arguments
 parser = argparse.ArgumentParser(add_help=False, description="Send action commands to be performed by the server or retrieve status information. If none of the optional arguments are given, basic status information is shown.")
 parser.add_argument("configFilePath")
 parser.add_argument("-h", "--help", action="help", help="show this help message and exit")
@@ -17,54 +17,54 @@ parser.add_argument("-r", "--remove", metavar="clientID", help="remove the clien
 parser.add_argument("--shutdown", action="store_true", help="remove all clients from the server's list and shutdown server")
 args = parser.parse_args()
 
-# Carrega configurações
-config = common.ConfigurationHandler(args.configFilePath).getConfig()
+# Load configurations
+config = common.SystemConfiguration(args.configFilePath).config
 
-# Conecta-se ao servidor
+# Connect to server
 try:
     server = socket.socket()
     server.connect((config["global"]["connection"]["address"], config["global"]["connection"]["port"]))
 except: 
-    sys.exit("ERRO: Nao foi possivel conectar-se ao servidor em %s:%s." % (config["global"]["connection"]["address"], config["global"]["connection"]["port"]))
+    sys.exit("ERROR: It was not possible to connect to server at %s:%s." % (config["global"]["connection"]["address"], config["global"]["connection"]["port"]))
 
-# Remove cliente
+# Remove client
 if (args.remove):
     server.send(json.dumps({"command": "RM_CLIENT", "clientid": args.remove}))
     response = server.recv(config["global"]["connection"]["bufsize"])
     server.shutdown(socket.SHUT_RDWR)
     server.close()
     
-    # Extrai comando recebido do servidor
+    # Extract command
     message = json.loads(response)
     command = message["command"]
     
     if (command == "RM_OK"):
-        print "Cliente %s removido com sucesso." % args.remove
+        print "Client %s successfully removed." % args.remove
     elif (command == "RM_ERROR"):
-        print "ERRO: %s." % message["reason"] 
+        print "ERROR: %s." % message["reason"] 
     
-# Desliga servidor
+# Shut down server
 elif (args.shutdown):   
     server.send(json.dumps({"command": "SHUTDOWN"}))
     response = server.recv(config["global"]["connection"]["bufsize"])
     server.shutdown(socket.SHUT_RDWR)
     server.close()
     
-    # Extrai comando recebido do servidor
+    # Extract command
     message = json.loads(response)
     command = message["command"]
     
     if (command == "SD_OK"):
-        print "Servidor desligado com sucesso."
+        print "Server successfully shut down."
         
-# Imprime status
+# Show status
 else:
     server.send(json.dumps({"command": "GET_STATUS"}))
     response = server.recv(config["global"]["connection"]["bufsize"])
     server.shutdown(socket.SHUT_RDWR)
     server.close()
     
-    # Extrai comando recebido do servidor
+    # Extract command
     message = json.loads(response)
     command = message["command"]
     

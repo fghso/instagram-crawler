@@ -32,14 +32,15 @@ Abaixo está um exemplo de como essa tabela pode ser criada:
 
 ```sql
 CREATE TABLE `resources` (
-  `resources_pk` int(10) NOT NULL AUTO_INCREMENT,
-  `resource_id` varchar(45) NOT NULL,
-  `status` tinyint(5) NOT NULL DEFAULT '0',
-  `amount` int(10) unsigned NOT NULL DEFAULT '0',
-  `crawler` varchar(45) DEFAULT NULL,
-  `updated_at` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (`resources_pk`),
-  UNIQUE KEY `resource_id_UNIQUE` (`resource_id`)
+    `resources_pk` int(10) unsigned NOT NULL AUTO_INCREMENT,
+    `resource_id` int(10) unsigned NOT NULL,
+    `status` tinyint(5) NOT NULL DEFAULT '0',
+    `response_code` tinyint(5) DEFAULT NULL,
+    `annotation` varchar(200) DEFAULT NULL,
+    `crawler` varchar(45) DEFAULT NULL,
+    `updated_at` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`resources_pk`),
+    UNIQUE KEY `resource_id_UNIQUE` (`resource_id`)
 );
 ```
 

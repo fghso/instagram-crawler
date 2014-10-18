@@ -11,34 +11,31 @@ def str2bool(stringToConvert):
 
     
 # ==================== Classes ====================
-class ConfigurationHandler():
+class SystemConfiguration():
     def __init__(self, configFilePath):
         configFile = open(configFilePath, "r")
         configDict = xmltodict.parse(configFile.read())
-        self._config = configDict["config"]
+        self.config = configDict["config"]
         self._setDefault()
         
     def _setDefault(self):
-        self._config["global"]["connection"]["port"] = int(self._config["global"]["connection"]["port"])
-        self._config["global"]["connection"]["bufsize"] = int(self._config["global"]["connection"]["bufsize"])
+        self.config["global"]["connection"]["port"] = int(self.config["global"]["connection"]["port"])
+        self.config["global"]["connection"]["bufsize"] = int(self.config["global"]["connection"]["bufsize"])
     
-        if ("autofeed" not in self._config["global"]): self._config["global"]["autofeed"] = False
-        else: self._config["global"]["autofeed"] = str2bool(self._config["global"]["autofeed"])
+        if ("autofeed" not in self.config["global"]): self.config["global"]["autofeed"] = False
+        else: self.config["global"]["autofeed"] = str2bool(self.config["global"]["autofeed"])
         
-        if ("loopforever" not in self._config["server"]): self._config["server"]["loopforever"] = False
-        else: self._config["server"]["loopforever"] = str2bool(self._config["server"]["loopforever"])
+        if ("loopforever" not in self.config["server"]): self.config["server"]["loopforever"] = False
+        else: self.config["server"]["loopforever"] = str2bool(self.config["server"]["loopforever"])
         
-        if ("logging" not in self._config["server"]): self._config["server"]["logging"] = True
-        else: self._config["server"]["logging"] = str2bool(self._config["server"]["logging"])
+        if ("logging" not in self.config["server"]): self.config["server"]["logging"] = True
+        else: self.config["server"]["logging"] = str2bool(self.config["server"]["logging"])
         
-        if ("verbose" not in self._config["server"]): self._config["server"]["verbose"] = False
-        else: self._config["server"]["verbose"] = str2bool(self._config["server"]["verbose"])
+        if ("verbose" not in self.config["server"]): self.config["server"]["verbose"] = False
+        else: self.config["server"]["verbose"] = str2bool(self.config["server"]["verbose"])
                 
-        if ("logging" not in self._config["client"]): self._config["client"]["logging"] = True
-        else: self._config["client"]["logging"] = str2bool(self._config["client"]["logging"])
+        if ("logging" not in self.config["client"]): self.config["client"]["logging"] = True
+        else: self.config["client"]["logging"] = str2bool(self.config["client"]["logging"])
         
-        if ("verbose" not in self._config["client"]): self._config["client"]["verbose"] = False
-        else: self._config["client"]["verbose"] = str2bool(self._config["client"]["verbose"])
-        
-    def getConfig(self):
-        return self._config
+        if ("verbose" not in self.config["client"]): self.config["client"]["verbose"] = False
+        else: self.config["client"]["verbose"] = str2bool(self.config["client"]["verbose"])
