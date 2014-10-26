@@ -1,11 +1,11 @@
 #!/usr/bin/python
 # -*- coding: iso-8859-1 -*-
 
+import sys
+import os
 import argparse
 import common
 import serverlib
-import persistence
-import filters
 
 
 # Analyse arguments
@@ -16,13 +16,20 @@ parser.add_argument("-v", "--verbose", type=common.str2bool, metavar="on/off", h
 parser.add_argument("-g", "--logging", type=common.str2bool, metavar="on/off", help="enable/disable logging on file")
 args = parser.parse_args()
 
+# Add directory of the configuration file to sys.path
+configFileDir = os.path.dirname(os.path.abspath(args.configFilePath))
+sys.path = [configFileDir] + sys.path
+
+import persistence
+import filters
+
 # Load configurations
-configurations = common.SystemConfiguration(args.configFilePath)
-if (args.verbose is not None): configurations.config["server"]["verbose"] = args.verbose
-if (args.logging is not None): configurations.config["server"]["logging"] = args.logging
+config = common.loadConfig(args.configFilePath)
+if (args.verbose is not None): config["server"]["verbose"] = args.verbose
+if (args.logging is not None): config["server"]["logging"] = args.logging
 
 # Start server
-server = serverlib.ThreadedTCPServer(configurations, persistence.MySQLPersistenceHandler)
-server.addFilter(filters.BaseFilter())
+server = serverlib.ThreadedTCPServer(config, persistence.MySQLPersistenceHandler)
+server.addFilter(filters.InstagramAppFilter)
 server.start()
                 

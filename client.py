@@ -3,12 +3,10 @@
 
 import sys
 import os
-import socket
 import json
 import logging
 import argparse
 import common
-import crawler
 
 
 # Analyse arguments
@@ -19,21 +17,26 @@ parser.add_argument("-v", "--verbose", type=common.str2bool, metavar="on/off", h
 parser.add_argument("-g", "--logging", type=common.str2bool, metavar="on/off", help="enable/disable logging on file")
 args = parser.parse_args()
 
+# Add directory of the configuration file to sys.path
+configFileDir = os.path.dirname(os.path.abspath(args.configFilePath))
+sys.path = [configFileDir] + sys.path
+
+import crawler
+
 # Load configurations
-config = common.SystemConfiguration(args.configFilePath).config
+config = common.loadConfig(args.configFilePath)
 if (args.verbose is not None): config["client"]["verbose"] = args.verbose
 if (args.logging is not None): config["client"]["logging"] = args.logging
 
 # Get an instance of the crawler
-crawlerObj = crawler.Crawler()
+crawlerObject = crawler.Crawler()
 
 # Get client ID
 processID = os.getpid()
-server = socket.socket()
-server.connect((config["global"]["connection"]["address"], config["global"]["connection"]["port"]))
-server.send(json.dumps({"command": "GET_LOGIN", "name": crawlerObj.getName(), "processid": processID}))
-response = server.recv(config["global"]["connection"]["bufsize"])
-message = json.loads(response)
+server = common.NetworkHandler()
+server.connect(config["global"]["connection"]["address"], config["global"]["connection"]["port"])
+server.send({"command": "GET_LOGIN", "name": crawlerObject.getName(), "processid": processID})
+message = server.recv()
 clientID = message["clientid"]
 
 # Configure logging
@@ -44,27 +47,33 @@ if (config["client"]["logging"]):
 if (config["client"]["verbose"]): print "Connected to server with ID %s " % clientID
 
 # Execute collection
-server.send(json.dumps({"command": "GET_ID", "clientid": clientID}))
+getNewID = True
 while (True):
     try:
-        response = server.recv(config["global"]["connection"]["bufsize"])
-
-        # Extract command
-        message = json.loads(response)
+        if (getNewID): 
+            server.send({"command": "GET_ID"})
+            getNewID = False
+    
+        message = server.recv()
         command = message["command"]
         
         if (command == "GIVE_ID"):
             # Call crawler with resource ID and parameters received from the server
             resourceID = message["resourceid"]
             filters = message["filters"]
-            crawlerResponse = crawlerObj.crawl(resourceID, config["client"]["logging"], filters)
+            crawlerResponse = crawlerObject.crawl(resourceID, config["client"]["logging"], filters)
             
             # Tell server that the collection of the resource has been finished
-            server.send(json.dumps({"command": "DONE_ID", "clientid": clientID, "resourceid": resourceID, "responsecode": crawlerResponse[0], "annotation": crawlerResponse[1]}))
-
+            server.send({"command": "DONE_ID", "resourceid": resourceID, "resourceinfo": crawlerResponse[0]})
+            
         elif (command == "DID_OK"):
-            # Get a new resource ID
-            server.send(json.dumps({"command": "GET_ID", "clientid": clientID}))
+            # If feedback is enabled and crawler returns new resources to be stored, send them to server
+            if (config["global"]["feedback"] and crawlerResponse[1]):
+                server.send({"command": "STORE_IDS", "resourceslist": crawlerResponse[1]})
+            else: getNewID = True
+                
+        elif (command == "STORE_OK"):
+            getNewID = True
             
         elif (command == "FINISH"):
             if (config["client"]["logging"]): logging.info("Task done, client finished.")
@@ -85,5 +94,4 @@ while (True):
             print (excType, fileName, excTb.tb_lineno)
         break
 
-server.shutdown(socket.SHUT_RDWR)
 server.close()
