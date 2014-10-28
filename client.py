@@ -17,10 +17,10 @@ parser.add_argument("-v", "--verbose", type=common.str2bool, metavar="on/off", h
 parser.add_argument("-g", "--logging", type=common.str2bool, metavar="on/off", help="enable/disable logging on file")
 args = parser.parse_args()
 
-# Add directory of the configuration file to sys.path
+# Add directory of the configuration file to sys.path before import crawler, so that the module can easily 
+# be overrided by placing the modified file in a subfolder, along with the configuration file itself
 configFileDir = os.path.dirname(os.path.abspath(args.configFilePath))
 sys.path = [configFileDir] + sys.path
-
 import crawler
 
 # Load configurations
@@ -43,17 +43,14 @@ clientID = message["clientid"]
 if (config["client"]["logging"]):
     logging.basicConfig(format="%(asctime)s %(module)s %(levelname)s: %(message)s", datefmt="%d/%m/%Y %H:%M:%S", 
                         filename="client%s[%s%s].log" % (clientID, config["global"]["connection"]["address"], config["global"]["connection"]["port"]), filemode="w", level=logging.DEBUG)
-    logging.info("Connected to server with ID %s " % clientID)
+
+logging.info("Connected to server with ID %s " % clientID)
 if (config["client"]["verbose"]): print "Connected to server with ID %s " % clientID
 
 # Execute collection
-getNewID = True
+server.send({"command": "GET_ID"})
 while (True):
     try:
-        if (getNewID): 
-            server.send({"command": "GET_ID"})
-            getNewID = False
-    
         message = server.recv()
         command = message["command"]
         
@@ -61,32 +58,35 @@ while (True):
             # Call crawler with resource ID and parameters received from the server
             resourceID = message["resourceid"]
             filters = message["filters"]
-            crawlerResponse = crawlerObject.crawl(resourceID, config["client"]["logging"], filters)
+            crawlerResponse = crawlerObject.crawl(resourceID, filters)
             
-            # Tell server that the collection of the resource has been finished
-            server.send({"command": "DONE_ID", "resourceid": resourceID, "resourceinfo": crawlerResponse[0]})
+            # Tell server that the collection of the resource has been finished. 
+            # If feedback is enabled, also send the new resources to server
+            if (config["global"]["feedback"]):
+                server.send({"command": "DONE_ID", "resourceinfo": crawlerResponse[0], "newresources": crawlerResponse[1]})
+            else: 
+                server.send({"command": "DONE_ID", "resourceinfo": crawlerResponse[0]})
             
-        elif (command == "DID_OK"):
-            # If feedback is enabled and crawler returns new resources to be stored, send them to server
-            if (config["global"]["feedback"] and crawlerResponse[1]):
-                server.send({"command": "STORE_IDS", "resourceslist": crawlerResponse[1]})
-            else: getNewID = True
+        elif (command == "DONE_RET"):
+            insertErrors = message["inserterrors"]
+            if (len(insertErrors) > 1): 
+                logging.error("Failed to insert the new resources %s after collect resource %s." % (" and ".join((", ".join(insertErrors[:-1]), insertErrors[-1])), resourceID))
+            elif (insertErrors): 
+                logging.error("Failed to insert the new resource %s after collect resource %s." % (insertErrors[0], resourceID))
+            server.send({"command": "GET_ID"})
                 
-        elif (command == "STORE_OK"):
-            getNewID = True
-            
         elif (command == "FINISH"):
-            if (config["client"]["logging"]): logging.info("Task done, client finished.")
+            logging.info("Task done, client finished.")
             if (config["client"]["verbose"]): print "Task done, client finished."
             break
             
         elif (command == "KILL"):
-            if (config["client"]["logging"]): logging.info("Client removed by the server.")
+            logging.info("Client removed by the server.")
             if (config["client"]["verbose"]): print "Client removed by the server."
             break
             
     except Exception as error:
-        if (config["client"]["logging"]): logging.exception("Exception while processing data. Execution aborted.")
+        logging.exception("Exception while processing data. Execution aborted.")
         if (config["client"]["verbose"]):
             print "ERROR: %s" % str(error)
             excType, excObj, excTb = sys.exc_info()

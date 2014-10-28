@@ -5,7 +5,7 @@
 import os
 import shutil
 import mysql.connector
-import app
+import DB
 
 
 def CopyAndCheck(source, dest, cursor):
@@ -37,7 +37,7 @@ def CopyAndCheck(source, dest, cursor):
     return
     
 
-mysqlConnection = mysql.connector.connect(user=app.dbUser, password=app.dbPassword, host=app.dbHost, database=app.dbName)
+mysqlConnection = mysql.connector.connect(user=DB.user, password=DB.password, host=DB.host, database=DB.name)
 cursor = mysqlConnection.cursor()
 
 CopyAndCheck("FeedCrawler/data", "CrawledData", cursor)

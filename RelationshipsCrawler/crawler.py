@@ -19,10 +19,6 @@ class Crawler:
     #   -2 => APINotAllowedError - you cannot view this resource
     #   -3 => APINotFoundError - this user does not exist
     def crawl(self, resourceID, loggingActive, filters):
-        print filters
-        time.sleep(10)
-        return ({"responsecode": 4, "annotation": 5}, None)
-    
         response = 2
     
         # Constrói objeto da API com as credenciais de acesso

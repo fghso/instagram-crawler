@@ -10,7 +10,7 @@ import datetime
 from mysql.connector.errors import Error
 from mysql.connector import errorcode
 import mysql.connector
-import app
+import DB
 
 
 
@@ -25,7 +25,7 @@ logging.basicConfig(format="%(asctime)s %(levelname)s: %(message)s", datefmt="%d
 
 # ==================== Banco de dados ====================
 # Abre conexão com o banco de dados
-mysqlConnection = mysql.connector.connect(user=app.dbUser, password=app.dbPassword, host=app.dbHost, database=app.dbName)
+mysqlConnection = mysql.connector.connect(user=DB.user, password=DB.password, host=DB.host, database=DB.name)
 bufferedCursor = mysqlConnection.cursor(buffered=True)
 cursor = mysqlConnection.cursor()
 

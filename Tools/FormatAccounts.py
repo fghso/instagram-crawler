@@ -16,7 +16,7 @@ app["application"] = []
 for line in accounts:
     acc = line.split(',')
     #app[acc[1]] = OrderedDict([("clientid", acc[2]), ("clientsecret", acc[3])])
-    app["application"].append(OrderedDict([("@name", acc[1]), ("clientid", acc[2]), ("clientsecret", acc[3])]))
+    app["application"].append(OrderedDict([("name", acc[1]), ("clientid", acc[2]), ("clientsecret", acc[3])]))
     
 # Salva em JSON
 jsonOuput = open("app.json", "w")    

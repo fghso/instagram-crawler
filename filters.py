@@ -10,10 +10,10 @@ import random
 from collections import OrderedDict
 
 
-# The filters are sequentially applied in the same order in wich they were added to the server (through calls 
-# to addFilter()), unless they were explicitly set as parallel (addFilter(parallel=True)). 
+# The filters are sequentially applied in the same order in wich they were specified in the 
+# configuration file, unless they were explicitly set as parallel in the configuration 
 class BaseFilter(): 
-    def __init__(self, name=""):
+    def __init__(self, name):
         if (name): self.name = name
         else: self.name = self.__class__.__name__
     
@@ -27,7 +27,7 @@ class BaseFilter():
 
 
 class InstagramAppFilter(BaseFilter):
-    def __init__(self, name=""):
+    def __init__(self, name):
         if os.path.exists(os.path.join(sys.path[0], "app.xml")): 
             appFile = open(os.path.join(sys.path[0], "app.xml"), "r")
         else: 

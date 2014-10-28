@@ -63,16 +63,23 @@ def loadConfig(configFilePath):
     configDict = xmltodict.parse(configFile.read())
     config = configDict["config"]
 
-    # Type conversions
+    # Connection
     config["global"]["connection"]["port"] = int(config["global"]["connection"]["port"])
 
-    # Global, server and client default values
+    # Persistence
+    if (isinstance(config["persistence"]["handler"], list)): 
+        for handler in config["persistence"]["handler"]:
+            if str2bool(handler["enable"]):
+                config["persistence"]["handler"] = handler
+                break
+
+    # Global default values
     if ("feedback" not in config["global"]): config["global"]["feedback"] = False
     else: config["global"]["feedback"] = str2bool(config["global"]["feedback"])
     
+    # Server default values
     if ("server" not in config): config["server"] = {}
-    if ("client" not in config): config["client"] = {}
-    
+
     if ("loopforever" not in config["server"]): config["server"]["loopforever"] = False
     else: config["server"]["loopforever"] = str2bool(config["server"]["loopforever"])
     
@@ -81,36 +88,24 @@ def loadConfig(configFilePath):
     
     if ("verbose" not in config["server"]): config["server"]["verbose"] = False
     else: config["server"]["verbose"] = str2bool(config["server"]["verbose"])
+    
+    if ("filter" not in config["server"]): config["server"]["filter"] = []
+    elif (not isinstance(config["server"]["filter"], list)): config["server"]["filter"] = [config["server"]["filter"]]
+    
+    for filter in config["server"]["filter"]:
+        filter["enable"] = str2bool(filter["enable"])
+        if ("name" not in filter): filter["name"] = None
+        if ("parallel" not in filter): filter["parallel"] = False
+        else: filter["parallel"] = str2bool(filter["parallel"]) 
             
+    # Client default values
+    if ("client" not in config): config["client"] = {}
+    
     if ("logging" not in config["client"]): config["client"]["logging"] = True
     else: config["client"]["logging"] = str2bool(config["client"]["logging"])
     
     if ("verbose" not in config["client"]): config["client"]["verbose"] = False
     else: config["client"]["verbose"] = str2bool(config["client"]["verbose"])
-        
-    # MySQLPersistenceHandler default values
-    if ("insert" not in config["persistence"]["mysql"]):
-        config["persistence"]["mysql"]["insert"] = config["persistence"]["mysql"]["select"]
-
-    if ("user" not in config["persistence"]["mysql"]["insert"]):
-        config["persistence"]["mysql"]["insert"]["user"] = config["persistence"]["mysql"]["select"]["user"]
-        
-    if ("password" not in config["persistence"]["mysql"]["insert"]):
-        config["persistence"]["mysql"]["insert"]["password"] = config["persistence"]["mysql"]["select"]["password"]
     
-    if ("host" not in config["persistence"]["mysql"]["insert"]):
-        config["persistence"]["mysql"]["insert"]["host"] = config["persistence"]["mysql"]["select"]["host"]
-    
-    if ("name" not in config["persistence"]["mysql"]["insert"]):
-        config["persistence"]["mysql"]["insert"]["name"] = config["persistence"]["mysql"]["select"]["name"]
-    
-    if ("table" not in config["persistence"]["mysql"]["insert"]):
-        config["persistence"]["mysql"]["insert"]["table"] = config["persistence"]["mysql"]["select"]["table"]
-        
-    if ("overwrite" not in config["persistence"]["mysql"]["insert"]): 
-        config["persistence"]["mysql"]["insert"]["overwrite"] = False
-    else: 
-        config["persistence"]["mysql"]["insert"]["overwrite"] = str2bool(config["persistence"]["mysql"]["insert"]["overwrite"])    
-        
     return config
     

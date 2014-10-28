@@ -5,7 +5,6 @@ import sys
 import os
 import argparse
 import common
-import serverlib
 
 
 # Analyse arguments
@@ -16,12 +15,11 @@ parser.add_argument("-v", "--verbose", type=common.str2bool, metavar="on/off", h
 parser.add_argument("-g", "--logging", type=common.str2bool, metavar="on/off", help="enable/disable logging on file")
 args = parser.parse_args()
 
-# Add directory of the configuration file to sys.path
+# Add directory of the configuration file to sys.path before import serverlib, so that persistence and filter modules
+# can easily be overrided by placing the modified files in a subfolder, along with the configuration file itself
 configFileDir = os.path.dirname(os.path.abspath(args.configFilePath))
 sys.path = [configFileDir] + sys.path
-
-import persistence
-import filters
+import serverlib
 
 # Load configurations
 config = common.loadConfig(args.configFilePath)
@@ -29,7 +27,6 @@ if (args.verbose is not None): config["server"]["verbose"] = args.verbose
 if (args.logging is not None): config["server"]["logging"] = args.logging
 
 # Start server
-server = serverlib.ThreadedTCPServer(config, persistence.MySQLPersistenceHandler)
-server.addFilter(filters.InstagramAppFilter)
+server = serverlib.ThreadedTCPServer(config)
 server.start()
                 

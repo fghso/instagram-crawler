@@ -57,7 +57,10 @@ CrawledData
 *.log
 *.out
 app.py
+DB.py
 config.xml
+app.xml
+app.json
 
 
 # =========================
