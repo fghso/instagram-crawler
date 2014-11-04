@@ -3,6 +3,7 @@
 
 import sys
 import os
+import socket
 import json
 import logging
 import argparse
@@ -28,6 +29,16 @@ config = common.loadConfig(args.configFilePath)
 if (args.verbose is not None): config["client"]["verbose"] = args.verbose
 if (args.logging is not None): config["client"]["logging"] = args.logging
 
+# Define auxiliary funtions
+def ReportCleanUpError():
+    logging.exception("Exception while cleaning up, reporting error to server.")
+    server.send({"command": "ERROR", "type": "cleanup"})
+
+def ReportCriticalError(message):
+    logging.error(message)
+    if (config["client"]["verbose"]): print "ERROR: %s" % message
+    server.send({"command": "ERROR", "type": "critical"})
+
 # Get an instance of the crawler
 crawlerObject = crawler.Crawler()
 
@@ -35,14 +46,14 @@ crawlerObject = crawler.Crawler()
 processID = os.getpid()
 server = common.NetworkHandler()
 server.connect(config["global"]["connection"]["address"], config["global"]["connection"]["port"])
-server.send({"command": "GET_LOGIN", "name": crawlerObject.getName(), "processid": processID})
+server.send({"command": "GET_LOGIN", "processid": processID})
 message = server.recv()
 clientID = message["clientid"]
 
 # Configure logging
 if (config["client"]["logging"]):
     logging.basicConfig(format="%(asctime)s %(module)s %(levelname)s: %(message)s", datefmt="%d/%m/%Y %H:%M:%S", 
-                        filename="client%s[%s%s].log" % (clientID, config["global"]["connection"]["address"], config["global"]["connection"]["port"]), filemode="w", level=logging.DEBUG)
+                        filename="client%s[%s%s].log" % (clientID, socket.gethostname(), config["global"]["connection"]["port"]), filemode="w", level=logging.DEBUG)
 
 logging.info("Connected to server with ID %s " % clientID)
 if (config["client"]["verbose"]): print "Connected to server with ID %s " % clientID
@@ -52,27 +63,59 @@ server.send({"command": "GET_ID"})
 while (True):
     try:
         message = server.recv()
+        
+        # Stop client execution if the connection has been interrupted
+        if (not message): 
+            logging.error("Connection to server has been abruptly closed.")
+            if (config["client"]["verbose"]): print "ERROR: Connection to server has been abruptly closed."
+            break
+        
         command = message["command"]
         
         if (command == "GIVE_ID"):
-            # Call crawler with resource ID and parameters received from the server
             resourceID = message["resourceid"]
             filters = message["filters"]
-            crawlerResponse = crawlerObject.crawl(resourceID, filters)
             
-            # Tell server that the collection of the resource has been finished. 
+            # Try to crawl the resource
+            try: crawlerResponse = crawlerObject.crawl(resourceID, filters)
+            except SystemExit: # If a SystemExit exception has been raised, abort execution
+                ReportCriticalError("SystemExit exception while crawling resource %s. Execution aborted." % resourceID)
+                break
+            # If crawl fails, try to clean up
+            except: 
+                logging.exception("Exception while crawling resource %s, cleaning up now." % resourceID)
+                try: crawlerObject.clean()
+                except SystemExit: 
+                    ReportCriticalError("SystemExit exception while cleaning up. Execution aborted.")
+                    break
+                # If clean up fails, report error
+                except: ReportCleanUpError()
+                else: server.send({"command": "DONE_ID", "fail": True})
+            # If everything is ok, tell server that the collection of the resource has been finished. 
             # If feedback is enabled, also send the new resources to server
-            if (config["global"]["feedback"]):
-                server.send({"command": "DONE_ID", "resourceinfo": crawlerResponse[0], "newresources": crawlerResponse[1]})
-            else: 
-                server.send({"command": "DONE_ID", "resourceinfo": crawlerResponse[0]})
+            else:
+                if (config["global"]["feedback"]): server.send({"command": "DONE_ID", "fail": False, "resourceinfo": crawlerResponse[0], "newresources": crawlerResponse[1]})
+                else: server.send({"command": "DONE_ID", "fail": False, "resourceinfo": crawlerResponse[0]})
             
         elif (command == "DONE_RET"):
-            insertErrors = message["inserterrors"]
-            if (len(insertErrors) > 1): 
-                logging.error("Failed to insert the new resources %s after collect resource %s." % (" and ".join((", ".join(insertErrors[:-1]), insertErrors[-1])), resourceID))
-            elif (insertErrors): 
-                logging.error("Failed to insert the new resource %s after collect resource %s." % (insertErrors[0], resourceID))
+            if (message["fail"]):
+                insertErrors = message["inserterrors"]
+                if (len(insertErrors) > 1): 
+                    logging.error("Failed to insert the new resources %s after collect resource %s, cleaning up now." % (" and ".join((", ".join(insertErrors[:-1]), insertErrors[-1])), resourceID))
+                else: 
+                    logging.error("Failed to insert the new resource %s after collect resource %s, cleaning up now." % (insertErrors[0], resourceID))
+                # Try to clean up
+                try: crawlerObject.clean()
+                except SystemExit: # If a SystemExit exception has been raised, abort execution
+                    ReportCriticalError("SystemExit exception while cleaning up. Execution aborted.")
+                    break
+                # If clean up fails, report error
+                except: ReportCleanUpError()
+                else: server.send({"command": "DONE_ID", "fail": True})
+            else:
+                server.send({"command": "GET_ID"})
+            
+        elif (command == "ERROR_RET"):
             server.send({"command": "GET_ID"})
                 
         elif (command == "FINISH"):

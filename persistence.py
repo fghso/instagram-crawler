@@ -1,27 +1,24 @@
 # -*- coding: iso-8859-1 -*-
 
 import logging
-import threading
 import mysql.connector
 from mysql.connector.errors import Error
 from mysql.connector import errorcode
 
 
 class BasePersistenceHandler():  
-    statusCodes = {"AVAILABLE":  0, 
-                   "INPROGRESS": 1, 
-                   "SUCCEDED":   2, 
-                   "FAILED":    -1}
+    statusCodes = {"SUCCEDED":   2,
+                   "INPROGRESS": 1,
+                   "AVAILABLE":  0, 
+                   "FAILED":    -1,
+                   "ERROR":     -2}
 
-    def __init__(self, configurationsDictionary): pass # all configurations in the XML are passed to the persistence class
-    def selectResource(self): return (None, None) # return (resource id, resource info dictionary)
-    def updateResource(self, resourceID, resourceInfo, status, crawler): pass
-    def insertResource(self, resourceID, resourceInfo, crawler): return True # return True or False
-    def totalResourcesCount(self): return 0
-    def resourcesAvailableCount(self): return 0
-    def resourcesInProgressCount(self): return 0
-    def resourcesSucceededCount(self): return 0
-    def resourcesFailedCount(self): return 0
+    def __init__(self, configurationsDictionary): pass # All configurations in the XML are passed to the persistence class
+    def select(self): return (None, None) # Return a tuple: (resource id, resource info dictionary)
+    def update(self, resourceID, status, resourceInfo): pass
+    def insert(self, resourceID, resourceInfo): return True # Return True if success or False otherwise
+    def count(self): return (0, 0, 0, 0, 0, 0) # Return a tuple: (total, succeeded, inprogress, available, failed, error)
+    def reset(self, status): return 0 # Return the number of resources reseted
     def close(self): pass
         
 
@@ -46,7 +43,7 @@ class MySQLPersistenceHandler(BasePersistenceHandler):
         if ("name" not in self.insertConfig): self.insertConfig["name"] = self.selectConfig["name"]
         if ("table" not in self.insertConfig): self.insertConfig["table"] = self.selectConfig["table"]
         
-    def selectResource(self):
+    def select(self):
         cursor = self.mysqlConnection.cursor()
         query = "SELECT " + ", ".join(["resource_id"] + self.selectConfig["resourceinfo"]) + " FROM " + self.selectConfig["table"] + " WHERE status = %s ORDER BY resources_pk LIMIT 1"
         cursor.execute(query, (self.statusCodes["AVAILABLE"],))
@@ -56,74 +53,63 @@ class MySQLPersistenceHandler(BasePersistenceHandler):
         if resource: return (resource[0], dict(zip(self.selectConfig["resourceinfo"], resource[1:])))
         else: return (None, None)
         
-    def updateResource(self, resourceID, resourceInfo, status, crawler):
+    def update(self, resourceID, status, resourceInfo):
         cursor = self.mysqlConnection.cursor()
         if not resourceInfo: 
-            query = "UPDATE " + self.selectConfig["table"] + " SET status = %s, crawler = %s WHERE resource_id = %s"
-            cursor.execute(query, (status, crawler, resourceID))
+            query = "UPDATE " + self.selectConfig["table"] + " SET status = %s WHERE resource_id = %s"
+            cursor.execute(query, (status, resourceID))
         else: 
-            query = "UPDATE " + self.selectConfig["table"] + " SET status = %s, crawler = %s, " + " = %s, ".join(resourceInfo.keys()) + " = %s WHERE resource_id = %s"
-            cursor.execute(query, (status, crawler) + tuple(resourceInfo.values()) + (resourceID,))
+            query = "UPDATE " + self.selectConfig["table"] + " SET status = %s, " + " = %s, ".join(resourceInfo.keys()) + " = %s WHERE resource_id = %s"
+            cursor.execute(query, (status,) + tuple(resourceInfo.values()) + (resourceID,))
         self.mysqlConnection.commit()
         cursor.close()
         
-    def insertResource(self, resourceID, resourceInfo, crawler):
+    def insert(self, resourceID, resourceInfo):
         cursor = self.mysqlConnection.cursor()
         try: 
             if not resourceInfo:
-                query = "INSERT INTO " + self.insertConfig["table"] + " (resource_id, crawler) VALUES (%s, %s)"
-                cursor.execute(query, (resourceID, crawler))
+                query = "INSERT INTO " + self.insertConfig["table"] + " (resource_id) VALUES (%s)"
+                cursor.execute(query, (resourceID,))
                 self.mysqlConnection.commit()
             else:
-                query = "INSERT INTO " + self.insertConfig["table"] + " (" + ", ".join(["resource_id", "crawler"] + resourceInfo.keys()) + ") VALUES (" + ", ".join(["%s", "%s"] + ["%s"] * len(resourceInfo)) + ")"
-                cursor.execute(query, (resourceID, crawler) + tuple(resourceInfo.values()))
+                query = "INSERT INTO " + self.insertConfig["table"] + " (" + ", ".join(["resource_id"] + resourceInfo.keys()) + ") VALUES (" + ", ".join(["%s"] + (["%s"] * len(resourceInfo))) + ")"
+                cursor.execute(query, (resourceID,) + tuple(resourceInfo.values()))
                 self.mysqlConnection.commit()
         except mysql.connector.Error as err:
             if err.errno != errorcode.ER_DUP_ENTRY:
-                logging.exception("Exception while inserting the new resource %s sent by crawler '%s'." % (resourceID, crawler))
+                logging.exception("Exception inserting resource.")
                 return False
             else: return True
         else: return True
+        finally: cursor.close()
         
-    def totalResourcesCount(self):
+    def count(self):
         cursor = self.mysqlConnection.cursor()
-        query = "SELECT count(resource_id) FROM " + self.selectConfig["table"]
+        query = "SELECT status, count(*) FROM " + self.selectConfig["table"] + " GROUP BY status"
+        
         cursor.execute(query)
-        count = cursor.fetchone()[0]
+        result = cursor.fetchall()
         cursor.close()
-        return count
         
-    def resourcesAvailableCount(self):
-        cursor = self.mysqlConnection.cursor()
-        query = "SELECT count(resource_id) FROM " + self.selectConfig["table"] + " WHERE status = %s"
-        cursor.execute(query, (self.statusCodes["AVAILABLE"],))
-        count = cursor.fetchone()[0]
-        cursor.close()
-        return count
+        counts = [0, 0, 0, 0, 0, 0]
+        for row in result:
+            if (row[0] == self.statusCodes["SUCCEDED"]): counts[1] = row[1]
+            elif (row[0] == self.statusCodes["INPROGRESS"]): counts[2] = row[1]
+            elif (row[0] == self.statusCodes["AVAILABLE"]): counts[3] = row[1]
+            elif (row[0] == self.statusCodes["FAILED"]): counts[4] = row[1]
+            elif (row[0] == self.statusCodes["ERROR"]): counts[5] = row[1]
+            counts[0] += row[1]
         
-    def resourcesInProgressCount(self):
-        cursor = self.mysqlConnection.cursor()
-        query = "SELECT count(resource_id) FROM " + self.selectConfig["table"] + " WHERE status = %s"
-        cursor.execute(query, (self.statusCodes["INPROGRESS"],))
-        count = cursor.fetchone()[0]
-        cursor.close()
-        return count
+        return tuple(counts)
         
-    def resourcesSucceededCount(self):
+    def reset(self, status):
         cursor = self.mysqlConnection.cursor()
-        query = "SELECT count(resource_id) FROM " + self.selectConfig["table"] + " WHERE status = %s"
-        cursor.execute(query, (self.statusCodes["SUCCEDED"],))
-        count = cursor.fetchone()[0]
+        query = "UPDATE " + self.selectConfig["table"] + " SET status = %s WHERE status = %s"
+        cursor.execute(query, (self.statusCodes["AVAILABLE"], status))
+        affectedRows = cursor.rowcount
+        self.mysqlConnection.commit()
         cursor.close()
-        return count
-    
-    def resourcesFailedCount(self):
-        cursor = self.mysqlConnection.cursor()
-        query = "SELECT count(resource_id) FROM " + self.selectConfig["table"] + " WHERE status = %s"
-        cursor.execute(query, (self.statusCodes["FAILED"],))
-        count = cursor.fetchone()[0]
-        cursor.close()
-        return count
+        return affectedRows
         
     def close(self):
         self.mysqlConnection.close()

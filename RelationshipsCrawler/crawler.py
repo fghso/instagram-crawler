@@ -1,8 +1,8 @@
 # -*- coding: iso-8859-1 -*-
 
 import os
-import json
 import socket
+import json
 import time
 import logging
 from instagram.client import InstagramAPI
@@ -10,21 +10,20 @@ from instagram.bind import InstagramAPIError
 
 
 class Crawler:
-    # Retorna o nome que identifica o coletor
-    def getName(self):
-        return socket.gethostname()
-
     # Valores de retorno:
-    #    2 => Coleta bem sucedida
-    #   -2 => APINotAllowedError - you cannot view this resource
-    #   -3 => APINotFoundError - this user does not exist
-    def crawl(self, resourceID, loggingActive, filters):
-        response = 2
-    
+    #    3 => Coleta bem sucedida
+    #   -3 => APINotAllowedError - you cannot view this resource
+    #   -4 => APINotFoundError - this user does not exist
+    def crawl(self, resourceID, filters):
+        responseCode = 3
+        followsCount = 0
+        followedByCount = 0
+        
         # Constrói objeto da API com as credenciais de acesso
-        clientID = filters["InstagramAppFilter"]["application"]["clientid"]
-        clientSecret = filters["InstagramAppFilter"]["application"]["clientsecret"]
+        clientID = filters[0]["data"]["application"]["clientid"]
+        clientSecret = filters[0]["data"]["application"]["clientsecret"]
         api = InstagramAPI(client_id = clientID, client_secret = clientSecret)
+        logging.info("Aplicação: %s." % str(filters[0]["data"]["application"]["name"]))
     
         # Configura tratamento de exceções
         maxNumberOfRetrys = 10
@@ -32,30 +31,25 @@ class Crawler:
         sleepSecondsMultiply = 0
         
         # Cria diretório para armazenar relacionamentos
-        dir = os.path.abspath("../data/relationships/%s" % resourceID)
+        dir = os.path.abspath("2ndRelationships/%s" % resourceID)
         if not os.path.exists(dir):
             os.makedirs(dir)
             
         # ----- Executa coleta da lista de usuários seguidos -----
-        nextCursor = ""
+        logging.info("Coletando a lista de seguidos do usuário %s." % resourceID)
+        fileNumber = 1
         nextFollowsPage = ""
-        followsList = []
-        while (nextFollowsPage != None):
+        while (nextFollowsPage is not None):
             while (True):
-                # Parseia url da próxima página para extrair o cursor
-                urlParts = nextFollowsPage.split("&")
-                if len(urlParts) > 1:
-                    nextCursor = urlParts[1].split("=")[1]
-            
                 try:
-                    follows, nextFollowsPage = api.user_follows(user_id=resourceID, return_json=True, count=35, cursor=nextCursor)
+                    follows, nextFollowsPage = api.user_follows(user_id=resourceID, return_json=True, count=100, with_next_url=nextFollowsPage)
                 except InstagramAPIError as err:
                     if (err.error_type == "APINotAllowedError"):
-                        response = -2
+                        responseCode = -3
                         nextFollowsPage = None
                         break
                     elif (err.error_type == "APINotFoundError"):
-                        response = -3
+                        responseCode = -4
                         nextFollowsPage = None
                         break
                     else:
@@ -63,77 +57,85 @@ class Crawler:
                         # experimenta aguardar um certo tempo antes da próxima tentativa
                         if (retrys < maxNumberOfRetrys):
                             sleepSeconds = 2 ** sleepSecondsMultiply
-                            logging.warning(u"Erro no cliente. Tentando novamente em %02d segundo(s). [Usuário: %s]" % (sleepSeconds, resourceID))
+                            logging.warning(u"Falha na requisição, tentando novamente em %02d segundo(s). [Usuário: %s]" % (sleepSeconds, resourceID))
                             time.sleep(sleepSeconds)
                             sleepSecondsMultiply += 1
                             retrys += 1
                             continue
                         else:
-                            logging.exception(u"Erro no cliente. Execução abortada. [Usuário: %s]" % resourceID)
+                            logging.exception(u"Erro na requisição, processamento interrompido. [Usuário: %s]" % resourceID)
                             raise
                 except Exception as err:
                     # Caso o número de tentativas não tenha ultrapassado o máximo,
                     # experimenta aguardar um certo tempo antes da próxima tentativa 
                     if (retrys < maxNumberOfRetrys):
                         sleepSeconds = 2 ** sleepSecondsMultiply
-                        logging.warning(u"Erro no cliente. Tentando novamente em %02d segundo(s). [Usuário: %s]" % (sleepSeconds, resourceID))
+                        logging.warning(u"Falha na requisição, tentando novamente em %02d segundo(s). [Usuário: %s]" % (sleepSeconds, resourceID))
                         time.sleep(sleepSeconds)
                         sleepSecondsMultiply += 1
                         retrys += 1
                         continue
                     else:
-                        logging.exception(u"Erro no cliente. Execução abortada. [Usuário: %s]" % resourceID)
+                        logging.exception(u"Erro na requisição, processamento interrompido. [Usuário: %s]" % resourceID)
                         raise
                 else:
                     retrys = 0
                     sleepSecondsMultiply = 0
-                    followsList.append(follows)
+                    
+                    # Salva arquivo JSON com a lista de usuários seguidos
+                    filename = "follows%d.json" % fileNumber
+                    output = open(os.path.join(dir, filename), "w")
+                    json.dump(follows, output)
+                    output.close()
+                    
+                    fileNumber += 1
+                    followsCount += len(follows)
                     break
-                    
-        # Salva arquivo JSON com a lista de usuários seguidos
-        filename = "%s.follows" % resourceID
-        output = open(os.path.join(dir, filename), "w")
-        json.dump(followsList, output)
-        output.close()
-                    
 
         # ----- Executa coleta da lista de seguidores -----
-        followedByList = []
-        if (response == 2):
-            nextCursor = ""
+        if (responseCode == 3):
+            logging.info("Coletando a lista de seguidores do usuário %s." % resourceID)
+            fileNumber = 1
             nextFollowedByPage = ""
-            while (nextFollowedByPage != None):
+            while (nextFollowedByPage is not None):
                 while (True):
-                    # Parseia url da próxima página para extrair o cursor
-                    urlParts = nextFollowedByPage.split("&")
-                    if len(urlParts) > 1:
-                        nextCursor = urlParts[1].split("=")[1]
-                
                     try:
-                        followedby, nextFollowedByPage = api.user_followed_by(user_id=resourceID, return_json=True, count=35, cursor=nextCursor)
+                        followedby, nextFollowedByPage = api.user_followed_by(user_id=resourceID, return_json=True, count=100, with_next_url=nextFollowedByPage)
                     except Exception as err:
                         # Caso o número de tentativas não tenha ultrapassado o máximo,
                         # experimenta aguardar um certo tempo antes da próxima tentativa 
                         if (retrys < maxNumberOfRetrys):
                             sleepSeconds = 2 ** sleepSecondsMultiply
-                            logging.warning(u"Erro no cliente. Tentando novamente em %02d segundo(s). [Usuário: %s]" % (sleepSeconds, resourceID))
+                            logging.warning(u"Falha na requisição, tentando novamente em %02d segundo(s). [Usuário: %s]" % (sleepSeconds, resourceID))
                             time.sleep(sleepSeconds)
                             sleepSecondsMultiply += 1
                             retrys += 1
                             continue
                         else:
-                            logging.exception(u"Erro no cliente. Execução abortada. [Usuário: %s]" % resourceID)
+                            logging.exception(u"Erro na requisição, processamento interrompido. [Usuário: %s]" % resourceID)
                             raise
                     else:
                         retrys = 0
                         sleepSecondsMultiply = 0
-                        followedByList.append(followedby)
-                        break
                         
-            # Salva arquivo JSON com a lista de seguidores
-            filename = "%s.followedby" % resourceID
-            output = open(os.path.join(dir, filename), "w")
-            json.dump(followedByList, output)
-            output.close()
+                        # Salva arquivo JSON com a lista de seguidores
+                        filename = "followedby%d.json" % fileNumber
+                        output = open(os.path.join(dir, filename), "w")
+                        json.dump(followedby, output)
+                        output.close()
+                        
+                        fileNumber += 1
+                        followedByCount += len(followedby)
+                        break
                     
-        return ({"responsecode": response, "follows_count": len(followsList), "followed_by_count": len(followedByList)}, None)
+        return ({"crawler_name": socket.gethostname(), 
+                 "response_code": responseCode, 
+                 "follows_count": followsCount, 
+                 "followed_by_count": followedByCount}, 
+                 None)
+        
+    # This function is called by the client when the crawl function raises an exception. This gives an opportunity to 
+    # clean up any allocated item associated with the resource being collected (for example, erase directories created),
+    # so that the system remains in a consistent state, allowing the resource to be crawled again
+    def clean(self):
+        pass

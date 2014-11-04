@@ -2,6 +2,7 @@
 
 import socket
 import json
+import logging
 import xmltodict
 
     
@@ -19,7 +20,7 @@ class NetworkHandler():
         
     def getaddress(self):
         #return (socket.gethostbyaddr(self.sock.getpeername()[0])[0], self.sock.getpeername()[1])
-        return self.sock.getpeername()
+        return (socket.gethostbyaddr(self.sock.getpeername()[0])[0],) + self.sock.getpeername()
         
     def send(self, message):
         strMsg = json.dumps(message)
@@ -39,8 +40,10 @@ class NetworkHandler():
     def recv(self):
         strMsg = ""
         while (True):
-            packet = self.sock.recv(self.bufsize)
-            if not packet: return None
+            packet = ""
+            try: packet = self.sock.recv(self.bufsize)
+            except: logging.exception("Exception while receiving data.")
+            if (not packet): return None
             header = json.loads(packet[:self.headersize])
             splitMsg = packet[self.headersize:]
             strMsg = "".join((strMsg, splitMsg))

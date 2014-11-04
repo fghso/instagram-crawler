@@ -2,47 +2,40 @@
 
 import os
 import json
+import socket
 import time
 import logging
 from instagram.client import InstagramAPI
 from instagram.bind import InstagramAPIError
-import app
 
 
 class Crawler:
-    # Retorna o nome que identifica o coletor
-    def getName(self):
-        return app.name
-
     # Valores de retorno:
     #    2 => Coleta bem sucedida
     #   -2 => APINotAllowedError - you cannot view this resource
     #   -3 => APINotFoundError - this user does not exist
-    def crawl(self, resourceID):
-        status = 2
-        amount = 0
+    def crawl(self, resourceID, filters):
+        response = 2
         
         # Constrói objeto da API com as credenciais de acesso
-        api = InstagramAPI(client_id = app.clientID, client_secret = app.clientSecret)
+        clientID = filters[0]["data"]["application"]["clientid"]
+        clientSecret = filters[0]["data"]["application"]["clientsecret"]
+        api = InstagramAPI(client_id = clientID, client_secret = clientSecret)
     
-        # Configura logging
-        logging.basicConfig(format="%(asctime)s %(levelname)s: %(message)s", datefmt="%d/%m/%Y %H:%M:%S", 
-                            filename="InstagramRelationshipsCrawler[%s].log" % app.name, filemode="w", level=logging.INFO)
-
         # Configura tratamento de exceções
         maxNumberOfRetrys = 10
         retrys = 0
         sleepSecondsMultiply = 0
         
         # Cria diretório para armazenar relacionamentos
-        dir = os.path.abspath("../CrawledData/Relationships/%s" % resourceID)
+        dir = os.path.abspath("../data/relationships/%s" % resourceID)
         if not os.path.exists(dir):
             os.makedirs(dir)
             
         # ----- Executa coleta da lista de usuários seguidos -----
-        fileNumber = 1
         nextCursor = ""
         nextFollowsPage = ""
+        followsList = []
         while (nextFollowsPage != None):
             while (True):
                 # Parseia url da próxima página para extrair o cursor
@@ -51,14 +44,14 @@ class Crawler:
                     nextCursor = urlParts[1].split("=")[1]
             
                 try:
-                    follows, nextFollowsPage = api.user_follows(user_id=resourceID, return_json=True, count=35, cursor=nextCursor)
+                    follows, nextFollowsPage = api.user_follows(user_id=resourceID, return_json=True, count=100, cursor=nextCursor)
                 except InstagramAPIError as err:
                     if (err.error_type == "APINotAllowedError"):
-                        status = -2
+                        response = -2
                         nextFollowsPage = None
                         break
                     elif (err.error_type == "APINotFoundError"):
-                        status = -3
+                        response = -3
                         nextFollowsPage = None
                         break
                     else:
@@ -90,20 +83,19 @@ class Crawler:
                 else:
                     retrys = 0
                     sleepSecondsMultiply = 0
-                    
-                    # Salva arquivo JSON com a lista de usuários seguidos
-                    filename = "follows%d.json" % fileNumber
-                    output = open(os.path.join(dir, filename), "w")
-                    json.dump(follows, output)
-                    output.close()
-                    
-                    fileNumber += 1
-                    amount += len(follows)
+                    followsList.append(follows)
                     break
+                    
+        # Salva arquivo JSON com a lista de usuários seguidos
+        filename = "%s.follows" % resourceID
+        output = open(os.path.join(dir, filename), "w")
+        json.dump(followsList, output)
+        output.close()
+                    
 
         # ----- Executa coleta da lista de seguidores -----
-        if (status == 2):
-            fileNumber = 1
+        followedByList = []
+        if (response == 2):
             nextCursor = ""
             nextFollowedByPage = ""
             while (nextFollowedByPage != None):
@@ -114,7 +106,7 @@ class Crawler:
                         nextCursor = urlParts[1].split("=")[1]
                 
                     try:
-                        followedby, nextFollowedByPage = api.user_followed_by(user_id=resourceID, return_json=True, count=35, cursor=nextCursor)
+                        followedby, nextFollowedByPage = api.user_followed_by(user_id=resourceID, return_json=True, count=100, cursor=nextCursor)
                     except Exception as err:
                         # Caso o número de tentativas não tenha ultrapassado o máximo,
                         # experimenta aguardar um certo tempo antes da próxima tentativa 
@@ -131,15 +123,19 @@ class Crawler:
                     else:
                         retrys = 0
                         sleepSecondsMultiply = 0
-                        
-                        # Salva arquivo JSON com a lista de seguidores
-                        filename = "followedby%d.json" % fileNumber
-                        output = open(os.path.join(dir, filename), "w")
-                        json.dump(followedby, output)
-                        output.close()
-                        
-                        fileNumber += 1
-                        amount += len(followedby)
+                        followedByList.append(followedby)
                         break
+                        
+            # Salva arquivo JSON com a lista de seguidores
+            filename = "%s.followedby" % resourceID
+            output = open(os.path.join(dir, filename), "w")
+            json.dump(followedByList, output)
+            output.close()
                     
-        return (status, amount)
+        return ({"crawler_name": socket.gethostname(), "response_code": response, "follows_count": len(followsList), "followed_by_count": len(followedByList)}, None)
+        
+    # This function is called by the client when the crawl function raises an exception. This gives an opportunity to 
+    # clean up any allocated item associated with the resource being collected (for example, erase directories created),
+    # so that the system remains in a consistent state, allowing the resource to be crawled again
+    def clean(self):
+        pass

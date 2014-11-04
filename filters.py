@@ -27,21 +27,22 @@ class BaseFilter():
 
 
 class InstagramAppFilter(BaseFilter):
-    def __init__(self, name):
-        if os.path.exists(os.path.join(sys.path[0], "app.xml")): 
-            appFile = open(os.path.join(sys.path[0], "app.xml"), "r")
-        else: 
-            appFile = open(os.path.join(sys.path[1], "app.xml"), "r")
-        appDict = xmltodict.parse(appFile.read())
-        self.applicationList = appDict["instagram"]["application"]
-        BaseFilter.__init__(self, name)
-        
     def apply(self, resourceID, resourceInfo, previousFilterData):
+        self._loadAppFile()
         while (True):
             (bestRate, appIndex) = self._getBestRate()
             if (bestRate == 0): time.sleep(300)
             else: break
         return OrderedDict([("application", self.applicationList[appIndex])])
+        
+    def _loadAppFile(self):
+        if os.path.exists(os.path.join(sys.path[0], "app.xml")): 
+            appFile = open(os.path.join(sys.path[0], "app.xml"), "r")
+        else: 
+            appFile = open(os.path.join(sys.path[1], "app.xml"), "r")
+        appDict = xmltodict.parse(appFile.read())
+        self.applicationList = appDict["instagram"]["application"] if isinstance(appDict["instagram"]["application"], list) else [appDict["instagram"]["application"]]
+        appFile.close()
 
     def _getBestRate(self):
         httpObj = httplib2.Http(disable_ssl_certificate_validation=True)
@@ -83,4 +84,4 @@ class InstagramAppFilter(BaseFilter):
 # ====== Testes ===== 
 #print InstagramAppFilter()._spendRandomRate(50)
 #print InstagramAppFilter()._spendSpecificRate(18, 1)
-#print InstagramAppFilter().apply()
+#print InstagramAppFilter("").apply(None, None, None)
