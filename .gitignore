@@ -53,10 +53,10 @@ coverage.xml
 docs/_build/
 
 # Custom
+/FacePlusPlus/fpp
 *.log
 *.out
 app.py
-DB.py
 config.xml
 app.xml
 app.json
