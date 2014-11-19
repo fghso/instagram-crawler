@@ -29,10 +29,13 @@ class BaseFilter():
 class InstagramAppFilter(BaseFilter):
     def apply(self, resourceID, resourceInfo, previousFilterData):
         self._loadAppFile()
-        while (True):
-            (bestRate, appIndex) = self._getBestRate()
-            if (bestRate == 0): time.sleep(300)
-            else: break
+        # Escolhe aplicação aleatória
+        appIndex = random.randint(0, len(self.applicationList) - 1)
+        # Escolhe aplicação com a maior quantidade de requisições disponíveis
+        # while (True):
+            # (bestRate, appIndex) = self._getBestRate()
+            # if (bestRate == 0): time.sleep(300)
+            # else: break
         return OrderedDict([("application", self.applicationList[appIndex])])
         
     def _loadAppFile(self):
@@ -64,7 +67,7 @@ class InstagramAppFilter(BaseFilter):
             rateList.append(rateRemaining)
         maxRate = max(rateList)
         return (maxRate, rateList.index(maxRate))
-        
+                
     # Funções apenas para testes
     def _spendRandomRate(self, repeat):
         httpObj = httplib2.Http(disable_ssl_certificate_validation=True)
