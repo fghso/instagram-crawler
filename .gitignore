@@ -56,10 +56,9 @@ docs/_build/
 /FacePlusPlus/fpp
 *.log
 *.out
-app.py
-config.xml
-app.xml
-app.json
+*.xml
+*.json
+DB.py
 
 
 # =========================

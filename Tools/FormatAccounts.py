@@ -19,9 +19,9 @@ for line in accounts:
     app["application"].append(OrderedDict([("name", acc[1]), ("clientid", acc[2]), ("clientsecret", acc[3])]))
     
 # Salva em JSON
-jsonOuput = open("app.json", "w")    
+jsonOuput = open("apps.json", "w")    
 json.dump(app, jsonOuput, indent = 4, sort_keys = True)
 
 # Salva em XML
-xmlOutput = open("app.xml", "w")
+xmlOutput = open("apps.xml", "w")
 xmltodict.unparse({"instagram": app}, output=xmlOutput, encoding="ISO8859-1", pretty=True)

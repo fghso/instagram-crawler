@@ -6,8 +6,8 @@ import socket
 import SocketServer
 import threading
 import json
-import logging
 import time
+import timeit
 import calendar
 import common
 import persistence
@@ -29,48 +29,71 @@ clientsThreads = {}
 # Define the next ID to give to a new client
 nextFreeID = 1
 
-# Flag to indicate wheter the server is running or no
-shutingDown = False
+# Timing variables
+serverSumTimes = {0: 0.0}
+clientSumTimes = {0: 0.0}
+crawlerSumTimes = {0: 0.0}
+numTimingMeasures = {0: long(0)}
+numCrawlingMeasures = {0: long(0)}
 
-# Define synchronization locks for critical regions of the code
-nextFreeIDLock = threading.Lock()
-getIDLock = threading.Lock()
+# Define synchronization objects for critical regions of the code
 removeClientLock = threading.Lock()
+clientRemovedCondition = threading.Condition()
 shutdownLock = threading.Lock()
 
 
 # ==================== Classes ====================
 class ServerHandler(SocketServer.BaseRequestHandler):
     def setup(self):
-        # Get persistence instance
-        self.persist = self.server.PersistenceHandlerClass(deepcopy(self.server.config["persistence"]["handler"]))
+        # Get network handler instance
+        self.client = common.NetworkHandler(self.request)
+    
+        # Get persistence handler instance
+        persistenceHandlerOptions = deepcopy(self.server.config["persistence"]["handler"])
+        self.persist = self.server.PersistenceHandlerClass(persistenceHandlerOptions)
+        
         # Get filters instances
-        self.parallelFilters = [FilterClass(filterName) for (FilterClass, filterName) in self.server.ParallelFiltersClasses]
-        self.sequentialFilters = [FilterClass(filterName) for (FilterClass, filterName) in self.server.SequentialFiltersClasses]
+        self.parallelFilters = []
+        self.sequentialFilters = []
+        for i, FilterClass in enumerate(self.server.FiltersClasses):
+            filterOptions = deepcopy(self.server.config["server"]["filter"][i])
+            if (filterOptions["parallel"]): self.parallelFilters.append(FilterClass(filterOptions))
+            else: self.sequentialFilters.append(FilterClass(filterOptions))
 
     def handle(self):
         # Declare global variables
         global nextFreeID
-        global shutingDown
+        global serverSumTimes
+        global clientSumTimes
+        global crawlerSumTimes
+        global numTimingMeasures
+        global numCrawlingMeasures
     
         # Define some local variables
         config = self.server.config
+        echo = self.server.echo
+        client = self.client
         persist = self.persist
         status = self.persist.statusCodes
-        client = common.NetworkHandler(self.request)
     
         # Start to handle
         clientID = 0
         running = True
         while (running):
             try: 
+                startClientTime = timeit.default_timer()
+                startCrawlerTime = timeit.default_timer()
+                
                 message = client.recv()
+                
+                endClientTime = timeit.default_timer()
+                endCrawlerTime = timeit.default_timer()
+                startServerTime = timeit.default_timer()
                 
                 # Stop thread execution if the connection has been interrupted
                 if (not message): 
                     clientResourceKey = clientsInfo[clientID][2]
-                    logging.error("Connection to client %d has been abruptly closed." % clientID)
-                    if (config["server"]["verbose"]): print "ERROR: Connection to client %d has been abruptly closed." % clientID
+                    echo.default("Connection to client %d has been abruptly closed." % clientID, "ERROR")
                     persist.update(clientResourceKey, status["ERROR"], None)
                     running = False
                     continue
@@ -78,16 +101,25 @@ class ServerHandler(SocketServer.BaseRequestHandler):
                 command = message["command"]
                 
                 if (command == "GET_LOGIN"):
-                    with nextFreeIDLock:
-                        clientID = nextFreeID
-                        nextFreeID += 1
                     clientAddress = client.getaddress()
                     clientPid = message["processid"]
-                    clientsInfo[clientID] = [clientAddress, clientPid, None, None, -1, datetime.now(), None]
-                    clientsThreads[clientID] = (threading.current_thread(), threading.Event())
-                    client.send({"command": "GIVE_LOGIN", "clientid": clientID})
-                    logging.info("New client connected: %d" % clientID)
-                    if (config["server"]["verbose"]): print "New client connected: %d" % clientID
+                    with shutdownLock:
+                        if (self.server.state == "running"):
+                            clientID = nextFreeID
+                            nextFreeID += 1
+                            clientsInfo[clientID] = [clientAddress, clientPid, None, None, -1, datetime.now(), None]
+                            clientsThreads[clientID] = (threading.current_thread(), threading.Event())
+                        else:
+                            client.send({"command": "GIVE_LOGIN", "fail": True, "reason": "Cannot connect, server is %s." % self.server.state})
+                            running = False
+                            continue
+                    serverSumTimes[clientID] = 0.0
+                    clientSumTimes[clientID] = 0.0
+                    crawlerSumTimes[clientID] = 0.0
+                    numTimingMeasures[clientID] = long(0)
+                    numCrawlingMeasures[clientID] = long(0)
+                    client.send({"command": "GIVE_LOGIN", "fail": False, "clientid": clientID})
+                    echo.default("New client connected: %d" % clientID)
                 
                 elif (command == "GET_ID"):
                     clientStopEvent = clientsThreads[clientID][1]
@@ -100,9 +132,7 @@ class ServerHandler(SocketServer.BaseRequestHandler):
                         tryagain = False
                         # If the client hasn't been removed, check resource availability
                         if (not clientStopEvent.is_set()):
-                            with getIDLock:
-                                (resourceKey, resourceID, resourceInfo) = persist.select()
-                                if (resourceID): persist.update(resourceKey, status["INPROGRESS"], None)
+                            (resourceKey, resourceID, resourceInfo) = persist.select()
                             # If there is a resource available, send ID to client
                             if (resourceID):
                                 clientsInfo[clientID][2] = resourceKey
@@ -115,45 +145,32 @@ class ServerHandler(SocketServer.BaseRequestHandler):
                                 if (config["server"]["loopforever"]): 
                                     time.sleep(5)
                                     tryagain = True
-                                # If there isn't resources available and loopforever is false, 
-                                # finish client and signal server to shut down
+                                # If there isn't resources available and loopforever is false, finish all clients
                                 else:
-                                    client.send({"command": "FINISH"})
-                                    del clientsInfo[clientID]
-                                    notShutingDown = shutdownLock.acquire(False)
-                                    if (notShutingDown):
-                                        try:
-                                            shutingDown = True
-                                            logging.info("Task done, finishing clients and server... \nClient %d finished." % clientID)
-                                            if (config["server"]["verbose"]): print "Task done, finishing clients and server... \nClient %d finished." % clientID
-                                            for ID in clientsThreads.iterkeys(): 
-                                                if (ID != clientID): clientsThreads[ID][0].join()
-                                            self.server.shutdown()
-                                            logging.info("Server finished." )
-                                            if (config["server"]["verbose"]): print "Server finished."
-                                        except: 
-                                            shutingDown = False
-                                            shutdownLock.release()
-                                    else: 
-                                        logging.info("Client %d finished." % clientID)
-                                        if (config["server"]["verbose"]): print "Client %d finished." % clientID 
-                                    running = False
-                        # If the client has been removed, kill it
+                                    with shutdownLock: 
+                                        if (self.server.state == "running"): 
+                                            echo.default("Task done, finishing clients...")
+                                            self.server.state = "finishing"
+                                            for ID in clientsInfo.keys(): self.removeClient(ID)
+                                    tryagain = True
+                        # If the client has been removed, finish it
                         else:
-                            client.send({"command": "KILL"})
                             del clientsInfo[clientID]
-                            logging.info("Client %d removed." % clientID)
-                            if (config["server"]["verbose"]): print "Client %d removed." % clientID
+                            with clientRemovedCondition: clientRemovedCondition.notify_all()
+                            if (self.server.state == "running"):
+                                client.send({"command": "FINISH", "reason": "removed"})
+                                echo.default("Client %d removed." % clientID)
+                            else:
+                                if (self.server.state == "finishing"): client.send({"command": "FINISH", "reason": "task done"})
+                                if (self.server.state == "shuting down"): client.send({"command": "FINISH", "reason": "shut down"})
+                                echo.default("Client %d finished." % clientID)
                             running = False
                     
                 elif (command == "DONE_ID"):
                     clientResourceKey = clientsInfo[clientID][2]
                     clientResourceID = clientsInfo[clientID][3]
                     clientResourceInfo = message["resourceinfo"]
-                    # If feedback is enabled, insert new resources sent by the client
-                    if (config["global"]["feedback"]):
-                        clientNewResources = message["newresources"]
-                        for resource in clientNewResources: persist.insert(resource[0], resource[1])
+                    if (config["global"]["feedback"]): persist.insert(message["newresources"])
                     persist.update(clientResourceKey, status["SUCCEDED"], clientResourceInfo)
                     client.send({"command": "DONE_RET"})
                             
@@ -161,15 +178,14 @@ class ServerHandler(SocketServer.BaseRequestHandler):
                     clientResourceKey = clientsInfo[clientID][2]
                     clientResourceID = clientsInfo[clientID][3]
                     if (message["type"] == "fail"):
-                        logging.warning("Client %s reported fail for resource %s." % (clientID, clientResourceID))
+                        echo.default("Client %s reported fail for resource %s." % (clientID, clientResourceID), "WARNING")
                         persist.update(clientResourceKey, status["FAILED"], None)
                         client.send({"command": "EXCEPTION_RET"})
                     elif (message["type"] == "error"):
-                        logging.error("Client %s reported critical error for resource %s. Connection closed." % (clientID, clientResourceID))
-                        if (config["server"]["verbose"]): print "ERROR: Critical error on client %s, connection closed." % clientID
+                        echo.default("Client %s reported error for resource %s. Connection closed." % (clientID, clientResourceID), "ERROR")
                         persist.update(clientResourceKey, status["ERROR"], None)
                         running = False
-                    
+                                    
                 elif (command == "GET_STATUS"):
                     # Clients status
                     clientsStatusList = []
@@ -183,11 +199,14 @@ class ServerHandler(SocketServer.BaseRequestHandler):
                         clientStatus["amount"] = info[4]
                         clientStatus["time"] = {"start": calendar.timegm(info[5].utctimetuple())}
                         clientStatus["time"]["lastrequest"] = calendar.timegm(info[6].utctimetuple())
+                        clientStatus["time"]["meanserver"] = serverSumTimes[ID] / numTimingMeasures[ID]
+                        clientStatus["time"]["meanclient"] = clientSumTimes[ID] / numTimingMeasures[ID]
+                        clientStatus["time"]["meancrawler"] = crawlerSumTimes[ID] / numCrawlingMeasures[ID] if (numCrawlingMeasures[ID] > 0) else 0
                         clientsStatusList.append(clientStatus)
                     # Server status
                     serverStatus = {"pid": os.getpid()}
+                    serverStatus["state"] = self.server.state
                     serverStatus["time"] = {"start": calendar.timegm(self.server.startTime.utctimetuple())}
-                    serverStatus["shutingdown"] = shutingDown
                     counts = persist.count()
                     serverStatus["counts"] = {"total": counts[0]}
                     serverStatus["counts"]["succeeded"] = counts[1]
@@ -215,7 +234,8 @@ class ServerHandler(SocketServer.BaseRequestHandler):
                         else: removeError.append(ID)
                     # Wait for alive threads to safely terminate
                     if (removeSuccess): 
-                        while any(ID in clientsInfo for ID in removeSuccess): pass
+                        with clientRemovedCondition: 
+                            while any(ID in clientsInfo for ID in removeSuccess): clientRemovedCondition.wait()
                     # Send response to manager
                     client.send({"command": "RM_RET", "successlist": [str(ID) for ID in removeSuccess], "errorlist": [str(ID) for ID in removeError]})
                     running = False
@@ -230,38 +250,48 @@ class ServerHandler(SocketServer.BaseRequestHandler):
                     running = False
                         
                 elif (command == "SHUTDOWN"):
-                    # Interrupt all active clients and mark resources requested by inactive 
-                    # clients as not collected. After that, shut down server
-                    notShutingDown = shutdownLock.acquire(False)
-                    if (notShutingDown):
-                        try:
-                            shutingDown = True
-                            logging.info("Removing all clients to shut down...")
-                            if (config["server"]["verbose"]): print "Removing all clients to shut down..."
-                            for ID in clientsInfo.keys(): self.removeClient(ID)
-                            while (clientsInfo): pass
-                            self.server.shutdown()    
-                            client.send({"command": "SD_RET", "fail": False})
-                            logging.info("Server manually shut down.")
-                            if (config["server"]["verbose"]): print "Server manually shut down."
-                        except:
-                            shutingDown = False
-                            shutdownLock.release()
-                    else:
-                        client.send({"command": "SD_RET", "fail": True, "reason": "Cannot perform action, server is already shuting down."})
                     running = False
+                    with shutdownLock:
+                        if (self.server.state == "running"): 
+                            self.server.state = "shuting down"
+                        else: 
+                            client.send({"command": "SD_RET", "fail": True, "reason": "Cannot perform action, server is %s." % ("already shuting down" if (self.server.state == "shuting down") else self.server.state)})
+                            continue
+                    echo.default("Finishing all clients to shut down...")
+                    for ID in clientsInfo.keys(): self.removeClient(ID)
+                    with clientRemovedCondition:
+                        while (clientsInfo): clientRemovedCondition.wait()
+                    client.send({"command": "SD_RET", "fail": False})
+                    
+                endServerTime = timeit.default_timer()
+                serverSumTimes[clientID] += (endServerTime - startServerTime)
+                clientSumTimes[clientID] += (endClientTime - startClientTime)
+                numTimingMeasures[clientID] += 1
+                if (command == "DONE_ID") or (command == "EXCEPTION"):
+                    crawlerSumTimes[clientID] += (endCrawlerTime - startCrawlerTime)
+                    numCrawlingMeasures[clientID] += 1
                     
             except Exception as error:
-                logging.exception("Exception while processing a request from client %d. Execution of thread '%s' aborted." % (clientID, threading.current_thread().name))
-                if (config["server"]["verbose"]): 
-                    print "ERROR: %s" % str(error)
-                    excType, excObj, excTb = sys.exc_info()
-                    fileName = os.path.split(excTb.tb_frame.f_code.co_filename)[1]
-                    print (excType, fileName, excTb.tb_lineno)
+                echo.exception("Exception while processing a request from client %d. Execution of thread '%s' aborted." % (clientID, threading.current_thread().name))
+                # if (config["server"]["verbose"]): 
+                    # print "ERROR: %s" % str(error)
+                    # excType, excObj, excTb = sys.exc_info()
+                    # fileName = os.path.split(excTb.tb_frame.f_code.co_filename)[1]
+                    # print (excType, fileName, excTb.tb_lineno)
                 running = False
     
     def finish(self):
         self.persist.close()
+        for filter in self.parallelFilters: filter.close()
+        for filter in self.sequentialFilters: filter.close()
+        
+        # If this is the last client finishing, free resources allocated by persistence and filters objects
+        if (self.server.state != "running") and (threading.active_count() == 2):
+            self.server.echo.default("Freeing allocated objects...")
+            self.persist.shutdown()
+            for filter in self.parallelFilters: filter.shutdown()
+            for filter in self.sequentialFilters: filter.shutdown()
+            self.server.shutdown() 
         
     def removeClient(self, ID):
         with removeClientLock:
@@ -272,8 +302,7 @@ class ServerHandler(SocketServer.BaseRequestHandler):
                     clientsThreads[ID][1].set()
                 else:
                     del clientsInfo[ID]
-                    logging.info("Client %d removed." % ID)
-                    if (self.server.config["server"]["verbose"]): print "Client %d removed." % ID
+                    self.server.echo.default("Client %d removed." % ID)
                 return True
             else:
                 return False
@@ -310,30 +339,24 @@ class ServerHandler(SocketServer.BaseRequestHandler):
 class ThreadedTCPServer(SocketServer.ThreadingMixIn, SocketServer.TCPServer):
     def __init__(self, configurationsDictionary):
         self.config = configurationsDictionary
-
-        # Configure logging
-        if (self.config["server"]["logging"]):
-            logging.basicConfig(format="%(asctime)s %(module)s %(levelname)s: %(message)s", datefmt="%d/%m/%Y %H:%M:%S", 
-                                filename="server[%s%s].log" % (socket.gethostname(), self.config["global"]["connection"]["port"]), filemode="w", level=logging.DEBUG)
-                                
-        # Add persistence handler
-        self.PersistenceHandlerClass = getattr(persistence, self.config["persistence"]["handler"]["class"])
         
-        # Add filters
-        self.ParallelFiltersClasses = []
-        self.SequentialFiltersClasses = []
-        for filter in self.config["server"]["filter"]:
-            if (filter["enable"]):
-                FilterClass = getattr(filters, filter["class"])
-                filterName = filter["name"]
-                if (filter["parallel"]): self.ParallelFiltersClasses.append((FilterClass, filterName))
-                else: self.SequentialFiltersClasses.append((FilterClass, filterName))
-                
+        # Configure echoing
+        self.echo = common.EchoHandler(self.config["server"], "server[%s%s].log" % (socket.gethostname(), self.config["global"]["connection"]["port"]))
+        
+        # Get persistence handler and filters classes
+        self.PersistenceHandlerClass = getattr(persistence, self.config["persistence"]["handler"]["class"])
+        self.FiltersClasses = [getattr(filters, filter["class"]) for filter in self.config["server"]["filter"]]
+                                
         # Call SocketSever constructor
         SocketServer.TCPServer.__init__(self, (self.config["global"]["connection"]["address"], self.config["global"]["connection"]["port"]), ServerHandler)
     
-    def start(self):
-        logging.info("Server ready. Waiting for connections...")
-        if (self.config["server"]["verbose"]): print "Server ready. Waiting for connections..."
+    def run(self):
         self.startTime = datetime.now()
+        self.state = "running"
+        
+        self.echo.default("Server ready. Waiting for connections...")
         self.serve_forever()
+        
+        if (self.state == "finishing"): self.echo.default("Server finished." )
+        else: self.echo.default("Server manually shut down.")
+            
