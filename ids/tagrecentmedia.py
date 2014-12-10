@@ -8,11 +8,11 @@ from instagram.client import InstagramAPI
 from mysql.connector.errors import Error
 from mysql.connector import errorcode
 import mysql.connector
-import DB
+import config
 
 
 # Constrói objeto da API com as credenciais de acesso
-api = InstagramAPI(client_id=DB.clientID, client_secret=DB.clientSecret)
+api = InstagramAPI(client_id=config.clientID, client_secret=config.clientSecret)
 
 # O limite de requisições estipulado nos termos de uso do Instagram é de 5000 requisições por hora. 
 # Por garantia o número máximo foi configurado para um valor um pouco abaixo desse limite 
@@ -20,7 +20,7 @@ maxRequestsPerHour = 4990
 
 # Configura logging
 logging.basicConfig(format="%(asctime)s %(levelname)s: %(message)s", datefmt="%d/%m/%Y %H:%M:%S", 
-                    filename="InstagramTagIDsCrawler[%s].log" % DB.appName, filemode="w", level=logging.INFO)
+                    filename="InstagramTagIDsCrawler[%s].log" % config.appName, filemode="w", level=logging.INFO)
 requestLoggingInterval = 1000
 
 # Configura tratamento de exceções
@@ -29,7 +29,7 @@ retrys = 0
 sleepSecondsMultiply = 0
 
 # Abre conexão com o banco de dados e define query de inserção
-mysqlConnection = mysql.connector.connect(user=DB.user, password=DB.password, host=DB.host, database=DB.name)
+mysqlConnection = mysql.connector.connect(user=config.dbUser, password=config.dbPassword, host=config.dbHost, database=config.dbName)
 cursor = mysqlConnection.cursor()
 query = """INSERT INTO users_test (user_id) VALUES (%s)"""
 

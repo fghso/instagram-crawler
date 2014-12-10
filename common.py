@@ -4,6 +4,7 @@ import socket
 import json
 import logging
 import inspect
+import datetime
 import xmltodict
 
     
@@ -15,6 +16,7 @@ class NetworkHandler():
         self.bufsize = 8192
         self.headersize = 15
         self.msgsize = self.bufsize - self.headersize - 1
+        self.dateHandler = lambda obj: obj.isoformat() if isinstance(obj, datetime.datetime) else None
         
     def connect(self, address, port):
         self.sock.connect((address, port))
@@ -24,7 +26,7 @@ class NetworkHandler():
         return (socket.gethostbyaddr(self.sock.getpeername()[0])[0].split(".")[0],) + self.sock.getpeername()
         
     def send(self, message):
-        strMsg = json.dumps(message)
+        strMsg = json.dumps(message, default = self.dateHandler)
         splitMsg = [strMsg[i:i+self.msgsize] for i in range(0, len(strMsg), self.msgsize)]
         
         # Send intermediary packets
@@ -64,7 +66,7 @@ class EchoHandler():
         # Set up logging
         if (self.logging):
             if (not loggingFileName): loggingFileName = self.callingModuleName + ".log"
-            logging.basicConfig(format="%(asctime)s %(name)s %(levelname)s: %(message)s", datefmt="%d/%m/%Y %H:%M:%S", 
+            logging.basicConfig(format=u"%(asctime)s %(name)s %(levelname)s: %(message)s", datefmt="%d/%m/%Y %H:%M:%S", 
                                 filename=loggingFileName, filemode="w", level=getattr(logging, defaultLoggingLevel))
             self.logger = logging.getLogger(self.callingModuleName)
         

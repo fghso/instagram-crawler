@@ -58,7 +58,8 @@ docs/_build/
 *.out
 *.xml
 *.json
-DB.py
+*.csv
+config.py
 
 
 # =========================

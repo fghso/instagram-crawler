@@ -12,15 +12,15 @@ from instagram.bind import InstagramAPIError
 from mysql.connector.errors import Error
 from mysql.connector import errorcode
 import mysql.connector
-import DB
+import config
 
 
 # Constrói objeto da API com as credenciais de acesso
-api = InstagramAPI(client_id=DB.clientID, client_secret=DB.clientSecret)
+api = InstagramAPI(client_id=config.clientID, client_secret=config.clientSecret)
 
 # Configura logging
 logging.basicConfig(format="%(asctime)s %(levelname)s: %(message)s", datefmt="%d/%m/%Y %H:%M:%S", 
-                    filename="InstagramRandomIDsCrawler[%s].log" % DB.name, filemode="w", level=logging.INFO)
+                    filename="InstagramRandomIDsCrawler[%s].log" % config.name, filemode="w", level=logging.INFO)
 
 # Configura tratamento de exceções
 maxNumberOfRetrys = 10
@@ -28,7 +28,7 @@ retrys = 0
 sleepSecondsMultiply = 0
 
 # Abre conexão com o banco de dados e define query de inserção
-mysqlConnection = mysql.connector.connect(user=DB.user, password=DB.password, host=DB.host, database=DB.name)
+mysqlConnection = mysql.connector.connect(user=config.dbUser, password=config.dbPassword, host=config.dbHost, database=config.dbName)
 cursor = mysqlConnection.cursor()
 query = """INSERT INTO users_to_collect (resource_id) VALUES (%s)"""
 

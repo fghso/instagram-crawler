@@ -4,7 +4,6 @@ import os
 import socket
 import json
 import time
-import logging
 from datetime import datetime
 from datetime import timedelta
 from instagram.client import InstagramAPI
@@ -14,16 +13,17 @@ from instagram.bind import InstagramAPIError
 class Crawler:
     # Valores de retorno:
     #    3 => Coleta bem sucedida
-    #   -3 => APINotAllowedError - you cannot view this resource
-    #   -4 => APINotFoundError - this user does not exist
+    #   -4 => APINotAllowedError - you cannot view this resource
+    #   -5 => APINotFoundError - this user does not exist
     def crawl(self, resourceID, filters):
         responseCode = 3
+        echo = common.EchoHandler()
     
         # Constrói objeto da API com as credenciais de acesso
         clientID = filters[0]["data"]["application"]["clientid"]
         clientSecret = filters[0]["data"]["application"]["clientsecret"]
         api = InstagramAPI(client_id = clientID, client_secret = clientSecret)
-        logging.info(u"Aplicacao: %s." % str(filters[0]["data"]["application"]["name"]))
+        echo.default(u"Aplicacao: %s." % str(filters[0]["data"]["application"]["name"]))
 
         # Configura tratamento de exceções
         maxNumberOfRetrys = 10
@@ -31,13 +31,14 @@ class Crawler:
         sleepSecondsMultiply = 3
         
         # Configura diretórios base para armazenamento
-        feedsDataDir = "../data/feeds"
+        feedsBaseDir = "../data/feeds"
+        feedsDataDir = os.path.join(feedsBaseDir, str(resourceID % 1000))
         if not os.path.exists(feedsDataDir): os.makedirs(feedsDataDir)
         
         # Executa coleta
         feedList = []
         pageCounter = 0
-        mediaCounter = 0
+        #mediaCounter = 0
         nextUserRecentMediaPage = ""
         while (nextUserRecentMediaPage is not None):
             try:
@@ -46,17 +47,17 @@ class Crawler:
             except InstagramAPIError as err:
                 # Se o usuário tiver o perfil privado ou não existir, captura exceção e marca erro no banco de dados
                 if (err.error_type == "APINotAllowedError"):
-                    responseCode = -3
+                    responseCode = -4
                     break
                 elif (err.error_type == "APINotFoundError"):
-                    responseCode = -4
+                    responseCode = -5
                     break
                 else:
                     # Caso o número de tentativas não tenha ultrapassado o máximo,
                     # experimenta aguardar um certo tempo antes da próxima tentativa 
                     if (retrys < maxNumberOfRetrys):
                         sleepSeconds = 2 ** sleepSecondsMultiply
-                        logging.warning(u"Erro na chamada a API. Tentando novamente em %02d segundo(s)." % sleepSeconds)
+                        echo.default(u"Erro na chamada à API. Tentando novamente em %02d segundo(s)." % sleepSeconds, "WARNING")
                         time.sleep(sleepSeconds)
                         sleepSecondsMultiply += 1
                         retrys += 1
@@ -67,8 +68,8 @@ class Crawler:
                 sleepSecondsMultiply = 3
                 if (userRecentMedia):
                     pageCounter += 1
-                    mediaCounter += len(userRecentMedia)
-                    logging.info(u"Coletando pagina %d de feeds do usuario %s." % (pageCounter, resourceID))
+                    #mediaCounter += len(userRecentMedia)
+                    echo.default(u"Coletando página %d de feeds do usuário %s." % (pageCounter, resourceID))
                     feedList.extend(userRecentMedia) 
         
         # Salva arquivo JSON com informações sobre as mídias do feed do usuário
@@ -76,8 +77,9 @@ class Crawler:
         json.dump(feedList, output)
         output.close()
 
-        return ({"crawler_name": socket.gethostname(), 
+        return (#"crawler_name": socket.gethostname(), 
                 "response_code": responseCode, 
-                "media_count": mediaCounter},
+                #"media_count": mediaCounter,
+                None,
                 None)
         
