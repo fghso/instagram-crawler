@@ -4,8 +4,9 @@ import sys
 import os
 import httplib2
 import time
-#import xmltodict
+import xmltodict
 import json
+import csv
 import random
 import common
 from collections import OrderedDict
@@ -42,7 +43,7 @@ class BaseFilter():
     def callback(self, resourceID, resourceInfo, newResources, extraInfo):
         pass
         
-    def close(self): pass # Called when a connection to a client is finished
+    def finish(self): pass # Called when a connection to a client is finished
     def shutdown(self): pass # Called when server is shut down, allowing to free shared resources
 
 
@@ -72,29 +73,29 @@ class InstagramAppFilter(BaseFilter):
             appIndex = random.randint(0, len(self.applicationList) - 1)
         else: 
             maxRate = 0
-            appIndex = 0
-            while (True):
-                if (self.config["method"] == "maxpost"):
-                    percentZeroAppRates = float(len(self.zeroAppRates)) / len(self.appRates)
-                    if (percentZeroAppRates > self.config["resetpercent"]):
-                        self.echo.default(u"Número máximo de aplicações com ratelimit esgotado atingido, fazendo requisições agora para verificar ratelimits atuais.", "WARNING")
-                        for appName in self.zeroAppRates[:]:
-                            appIndex = self.appIndexes[appName]
-                            self.appRates[appName] = self._getAppRate(self.applicationList[appIndex])
-                            self.zeroAppRates.remove(appName)
-                    for appName, rateRemaining in self.appRates.iteritems():
-                        if (rateRemaining > maxRate) and (appName != self.lastAppName):
-                            maxRate = rateRemaining
-                            appIndex = self.appIndexes[appName]
-                    self.lastAppName = self.applicationList[appIndex]["name"]
-                else: 
+            appIndex = None
+            if (self.config["method"] == "maxpost"):
+                percentZeroAppRates = float(len(self.zeroAppRates)) / len(self.appRates)
+                if (percentZeroAppRates > self.config["resetpercent"]):
+                    self.echo.default(u"Maximum number of applications with ratelimit exceeded hit, making requests now to check actual ratelimits.", "WARNING")
+                    for appName in self.zeroAppRates[:]:
+                        appIndex = self.appIndexes[appName]
+                        self.appRates[appName] = self._getAppRate(self.applicationList[appIndex])
+                        self.zeroAppRates.remove(appName)
+                for appName, rateRemaining in self.appRates.iteritems():
+                    if (rateRemaining > maxRate) and (appName != self.lastAppName):
+                        maxRate = rateRemaining
+                        appIndex = self.appIndexes[appName]
+                self.lastAppName = self.applicationList[appIndex]["name"]
+            else: 
+                while (True):
                     for i, application in enumerate(self.applicationList):
                         rateRemaining = self._getAppRate(application)
                         if (rateRemaining > maxRate): 
                             maxRate = rateRemaining
                             appIndex = i
                     if (maxRate == 0): 
-                        self.echo.default(u"Ratelimit de todas as aplicações esgotado, dormindo agora por %d segundos..." % self.config["sleeptimedelta"], "WARNING")
+                        self.echo.default(u"Ratelimit of all applications exceeded, sleeping now for %d seconds..." % self.config["sleeptimedelta"], "WARNING")
                         time.sleep(self.config["sleeptimedelta"])
                     else: break
         return OrderedDict([("application", self.applicationList[appIndex])])
@@ -106,18 +107,32 @@ class InstagramAppFilter(BaseFilter):
         self.appRates[appName] = appRate
         
     def _loadAppFile(self):
+        # Open file
         if os.path.exists(os.path.join(sys.path[0], self.config["appsfile"])): 
             appsFile = open(os.path.join(sys.path[0], self.config["appsfile"]), "r")
         else: 
             appsFile = open(os.path.join(sys.path[1], self.config["appsfile"]), "r")
-        #appDict = xmltodict.parse(appFile.read())
-        #self.applicationList = appDict["instagram"]["application"] if isinstance(appDict["instagram"]["application"], list) else [appDict["instagram"]["application"]]
-        self.applicationList = json.load(appsFile)["application"]
+            
+        # Load content
+        fileType = os.path.splitext(self.config["appsfile"])[1][1:].lower()
+        if (fileType == "xml"):
+            appDict = xmltodict.parse(appsFile.read())
+            self.applicationList = appDict["instagram"]["application"] if isinstance(appDict["instagram"]["application"], list) else [appDict["instagram"]["application"]]
+        elif (fileType == "json"):
+            self.applicationList = json.load(appsFile)["application"]
+        elif (fileType == "csv"):
+            reader = csv.DictReader(appsFile, quoting = csv.QUOTE_NONE)
+            self.applicationList = list(reader)
+        else: raise TypeError("Unknown file type '%s'." % self.selectConfig["filename"])
+        
+        # Build indexes and rates lists
         self.appIndexes = {}
         for i, application in enumerate(self.applicationList):
             self.appIndexes[application["name"]] = i
             if (self.config["method"] == "maxpost") and (application["name"] not in self.appRates): 
                 self.appRates[application["name"]] = self._getAppRate(application)
+        
+        # Close file
         appsFile.close()
     
     def _getAppRate(self, application):
@@ -128,9 +143,9 @@ class InstagramAppFilter(BaseFilter):
             rateRemaining = int(header["x-ratelimit-remaining"])
         except:
             if (header['status'] == '503') or (header['status'] == '429'):
-                self.echo.default(u"Ratelimit de %s esgotado." % application["name"], "WARNING")
+                self.echo.default(u"Ratelimit of %s exceeded." % application["name"], "WARNING")
             else:
-                message = u"Falha na requisição para verificar ratelimit de %s.\n" % application["name"]
+                message = u"Request to check ratelimit of %s failed.\n" % application["name"]
                 message += u"Header: %s\n" % header
                 message += u"Content: %s\n" % content
                 self.echo.default(message, "ERROR")

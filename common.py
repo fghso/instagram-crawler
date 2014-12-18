@@ -4,8 +4,9 @@ import socket
 import json
 import logging
 import inspect
-import datetime
+import calendar
 import xmltodict
+from datetime import datetime
 
     
 # ==================== Classes ====================
@@ -14,9 +15,17 @@ class NetworkHandler():
         if (socketObject): self.sock = socketObject
         else: self.sock = socket.socket()
         self.bufsize = 8192
-        self.headersize = 15
-        self.msgsize = self.bufsize - self.headersize - 1
-        self.dateHandler = lambda obj: obj.isoformat() if isinstance(obj, datetime.datetime) else None
+        self.headersize = 10
+    
+    def _defaultSerializer(self, obj):
+        #if isinstance(obj, datetime): return obj.isoformat()
+        if isinstance(obj, datetime): return {"__datetime__": calendar.timegm(obj.utctimetuple())}
+        elif isinstance(obj, set): return tuple(obj)
+        raise TypeError("%s is not JSON serializable" % obj)
+        
+    def _defaultDeserializer(self, dictionary):
+        if ("__datetime__" in dictionary): return datetime.utcfromtimestamp(dictionary["__datetime__"])
+        return dictionary
         
     def connect(self, address, port):
         self.sock.connect((address, port))
@@ -26,31 +35,26 @@ class NetworkHandler():
         return (socket.gethostbyaddr(self.sock.getpeername()[0])[0].split(".")[0],) + self.sock.getpeername()
         
     def send(self, message):
-        strMsg = json.dumps(message, default = self.dateHandler)
-        splitMsg = [strMsg[i:i+self.msgsize] for i in range(0, len(strMsg), self.msgsize)]
-        
-        # Send intermediary packets
-        header = json.dumps({"last": False})
-        for i in range(len(splitMsg) - 1):
-            packet = " ".join((header, splitMsg[i]))
-            self.sock.sendall(packet)
-        
-        # Send final packet
-        header = json.dumps({"last": True})
-        packet = " ".join((header, splitMsg[-1]))
-        self.sock.sendall(packet)
-        
+        strMsg = json.dumps(message, default = self._defaultSerializer)
+        msgSize = str(len(strMsg)).zfill(self.headersize)
+        self.sock.sendall(msgSize + strMsg)
+                
     def recv(self):
+        # Get message size
+        msgSize = ""
+        while len(msgSize) < self.headersize:
+            more = self.sock.recv(self.headersize)
+            if (not more): return more
+            msgSize += more
+        msgSize = int(msgSize)
+        
+        # Get message
         strMsg = ""
-        while (True):
-            packet = ""
-            packet = self.sock.recv(self.bufsize)
-            if (not packet): return None
-            header = json.loads(packet[:self.headersize])
-            splitMsg = packet[self.headersize:]
-            strMsg = "".join((strMsg, splitMsg))
-            if header["last"]: break
-        return json.loads(strMsg)    
+        while len(strMsg) < msgSize:
+            more = self.sock.recv(min(msgSize - len(strMsg), self.bufsize))
+            if (not more): return more
+            strMsg += more
+        return json.loads(strMsg, object_hook = self._defaultDeserializer)
     
     def close(self):
         self.sock.shutdown(socket.SHUT_RDWR)

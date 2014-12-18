@@ -5,7 +5,6 @@ import sys
 import json
 import argparse
 import common
-from datetime import datetime
 
 
 # Analyse arguments
@@ -13,8 +12,8 @@ parser = argparse.ArgumentParser(add_help=False, description="Send action comman
 parser.add_argument("configFilePath")
 parser.add_argument("-h", "--help", action="help", help="show this help message and exit")
 parser.add_argument("-s", "--status", choices=["raw", "basic", "extended"], help="show status information")
-parser.add_argument("-r", "--remove", metavar="clientID", nargs="+", help="remove clients from the server's list. Multiple client IDs can be given, separated by spaces. To remove all disconnected clients, write '+' as the ID")
-parser.add_argument("--reset", choices=["inprogress", "failed", "error"], help="make available the resources with the specified status")
+parser.add_argument("-r", "--remove", metavar="client ID or client hostname", nargs="+", help="remove clients from the server's list. Multiple client IDs or hostnames can be given, separated by spaces. It is also possible to enter an ID range in the form 'min:max', where min and max are IDs. To remove all disconnected clients, use the keyword 'disconnected'. To remove all clients at once, use the keyword 'all'")
+parser.add_argument("--reset", choices=["succeeded", "inprogress", "failed", "error"], help="make available the resources with the specified status")
 parser.add_argument("--shutdown", action="store_true", help="remove all clients from the server's list and shutdown server")
 args = parser.parse_args()
 
@@ -27,16 +26,31 @@ try:
     server.connect(config["global"]["connection"]["address"], config["global"]["connection"]["port"])
 except:
     sys.exit("ERROR: It was not possible to connect to server at %s:%s." % (config["global"]["connection"]["address"], config["global"]["connection"]["port"]))
+    
+server.send({"command": "CONNECT", "type": "manager"})
+message = server.recv()
+if (message["command"] == "REFUSED"): sys.exit("ERROR: %s" % message["reason"])
 
 # Remove client
 if (args.remove):
-    server.send({"command": "RM_CLIENTS", "clientidlist": args.remove})
+    clientIDs = set()
+    clientNames = set()
+
+    for entry in args.remove:
+        if entry.isdigit(): 
+            clientIDs.add(int(entry))
+        else:
+            minMax = entry.split(":")
+            if (len(minMax) > 1): clientIDs.update(range(int(minMax[0]), int(minMax[1]) + 1))
+            else: clientNames.add(entry)
+            
+    server.send({"command": "RM_CLIENTS", "clientids": clientIDs, "clientnames": clientNames})
     message = server.recv()
     server.close()
     
     removeSuccess = message["successlist"]
     removeError = message["errorlist"]
-    if (not removeSuccess) and (not removeError): print "No disconnected client found to remove."
+    if (not removeSuccess) and (not removeError): print "No client in the list found to remove."
     if (len(removeSuccess) > 1): 
         print "Clients %s successfully removed." % " and ".join((", ".join(removeSuccess[:-1]), removeSuccess[-1]))
     elif (removeSuccess): 
@@ -62,10 +76,22 @@ elif (args.reset):
 elif (args.shutdown):   
     server.send({"command": "SHUTDOWN"})
     message = server.recv()
-    server.close()
     
-    if (message["fail"]): print "ERROR: %s" % message["reason"]
-    else: print "Server successfully shut down."
+    if (message["state"] == "failed"): sys.exit("ERROR: %s" % message["reason"])
+    
+    print "Finishing all clients to shut down..."    
+    total = message["remaining"]
+    while (message["state"] == "sdclients"):
+        print "%d done, %d remaining.%s\r" % (total - message["remaining"], message["remaining"], " " * 10),
+        message = server.recv()
+    print "%d done, 0 remaining.%s\r" % (total, " " * 10)
+    
+    print "Shuting down filters..."
+    message = server.recv()
+    print "Shuting down persistence handler..."
+    message = server.recv()
+    print "Server successfully shut down."
+    server.close()
         
 # Show status
 else:
@@ -76,17 +102,16 @@ else:
     
     clientsStatusList = message["clients"]
     serverStatus = message["server"]
-    serverStatus["time"]["start"] = datetime.utcfromtimestamp(serverStatus["time"]["start"])
-    dateTimeNow = datetime.now()
     
     # Raw status
     if (args.status == "raw"):
         status = "\n" + (" Status ").center(50, ':') + "\n\n"
         status += "  Server:\n"
-        status += str("    [address, port, pid, state, start, total, succeeded, inprogress, available, failed, error]\n    ")
+        status += str("    [address, port, pid, state, start, current, total, succeeded, inprogress, available, failed, error]\n    ")
         status += str([serverAddress[1], serverAddress[2], serverStatus["pid"], 
                         serverStatus["state"],
                         serverStatus["time"]["start"].strftime("%d/%m/%Y %H:%M:%S"),
+                        serverStatus["time"]["current"].strftime("%d/%m/%Y %H:%M:%S"),
                         serverStatus["counts"]["total"], serverStatus["counts"]["succeeded"], 
                         serverStatus["counts"]["inprogress"], serverStatus["counts"]["available"], 
                         serverStatus["counts"]["failed"], serverStatus["counts"]["error"]])
@@ -97,8 +122,6 @@ else:
             status += "    No client connected right now.\n"
         for clientStatus in clientsStatusList:
             clientStatus["threadstate"] = " " if (clientStatus["threadstate"] == 0) else ("-" if (clientStatus["threadstate"] == -1) else "+")
-            clientStatus["time"]["start"] = datetime.utcfromtimestamp(clientStatus["time"]["start"])
-            clientStatus["time"]["lastrequest"] = datetime.utcfromtimestamp(clientStatus["time"]["lastrequest"])
             status += str([clientStatus["clientid"], clientStatus["threadstate"], str(clientStatus["address"][0]), 
                         str(clientStatus["address"][1]), clientStatus["address"][2], clientStatus["pid"],
                         clientStatus["time"]["start"].strftime("%d/%m/%Y %H:%M:%S"), 
@@ -118,9 +141,7 @@ else:
             for clientStatus in clientsStatusList:
                 clientStatus["clientid"] = "#%d" % clientStatus["clientid"]
                 clientStatus["threadstate"] = " " if (clientStatus["threadstate"] == 0) else ("-" if (clientStatus["threadstate"] == -1) else "+")
-                clientStatus["time"]["start"] = datetime.utcfromtimestamp(clientStatus["time"]["start"])
-                clientStatus["time"]["lastrequest"] = datetime.utcfromtimestamp(clientStatus["time"]["lastrequest"])
-                elapsedTime = dateTimeNow - clientStatus["time"]["start"]
+                elapsedTime = serverStatus["time"]["current"] - clientStatus["time"]["start"]
                 elapsedMinSec = divmod(elapsedTime.seconds, 60)
                 elapsedHoursMin = divmod(elapsedMinSec[0], 60)
                 status += "  %3s %s %s (%s:%s/%s): %s since %s [%d processed in %s]\n" % (
@@ -139,7 +160,7 @@ else:
         else:
             status += "  No client connected right now.\n"
 
-        elapsedTime = dateTimeNow - serverStatus["time"]["start"]
+        elapsedTime = serverStatus["time"]["current"] - serverStatus["time"]["start"]
         elapsedMinSec = divmod(elapsedTime.seconds, 60)
         elapsedHoursMin = divmod(elapsedMinSec[0], 60)
         
@@ -165,7 +186,7 @@ else:
         resourcesErrorPercent = ((resourcesError / resourcesTotal) * 100) if (resourcesTotal > 0) else 0.0
         resourcesProcessedPercent = ((resourcesProcessed / resourcesTotal) * 100) if (resourcesTotal > 0) else 0.0
         
-        sumClientElapsedTime = sum([(dateTimeNow - clientStatus["time"]["start"]).seconds for clientStatus in clientsStatusList])
+        sumClientElapsedTime = sum([(serverStatus["time"]["current"] - clientStatus["time"]["start"]).seconds for clientStatus in clientsStatusList])
         sumAgrServerTime = sum([clientStatus["time"]["agrserver"] for clientStatus in clientsStatusList])
         fractionServerTime = sumAgrServerTime / sumClientElapsedTime if (sumClientElapsedTime > 0) else 0.0
         proportionalServerTime = fractionServerTime * elapsedTime.seconds
@@ -184,6 +205,7 @@ else:
         proportionalCrawlerMinSec = divmod(proportionalCrawlerTime, 60)
         proportionalCrawlerHoursMin = divmod(proportionalCrawlerMinSec[0], 60)
         proportionalCrawlerTimePercent = fractionCrawlerTime * 100
+        proportionalTotalTime = proportionalServerTime + proportionalClientTime
         performanceIndicator = "good"
         if (proportionalServerTimePercent >= 25): performanceIndicator = "moderate"
         if (proportionalServerTimePercent >= 50): performanceIndicator = "bad"
@@ -201,9 +223,9 @@ else:
         
         numResourcesProcessed = float(sum([clientStatus["amount"] for clientStatus in clientsStatusList]))
         avgResourcesPerclient = numResourcesProcessed / clientsTotal if (clientsTotal > 0) else 0.0
-        avgResourcesPerSec = numResourcesProcessed / sumAgrClientTime if (sumAgrClientTime > 0) else 0.0
+        avgResourcesPerSec = numResourcesProcessed / proportionalTotalTime if (proportionalTotalTime > 0) else 0.0
         
-        estimatedTimeToFinish = (sumAvgCrawlerTime / clientsTotal) * resourcesTotal if (clientsTotal > 0) else 0.0
+        estimatedTimeToFinish = (sumAvgCrawlerTime / (clientsTotal ** 2)) * (resourcesAvailable + resourcesInProgress) if (clientsTotal > 0) else 0.0
         estimatedMinSec = divmod(estimatedTimeToFinish, 60)
         estimatedHoursMin = divmod(estimatedMinSec[0], 60)
         
@@ -247,7 +269,6 @@ else:
             for clientStatus in clientsStatusList:
                 clientStatus["clientid"] = "#%d" % clientStatus["clientid"]
                 clientStatus["threadstate"] = " " if (clientStatus["threadstate"] == 0) else ("-" if (clientStatus["threadstate"] == -1) else "+")
-                clientStatus["time"]["lastrequest"] = datetime.utcfromtimestamp(clientStatus["time"]["lastrequest"])
                 status += "  %3s %s %s: %s since %s\n" % (
                             clientStatus["clientid"], 
                             clientStatus["threadstate"], 
