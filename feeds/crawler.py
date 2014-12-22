@@ -33,7 +33,7 @@ class Crawler:
         echo.default(u"App: %s." % str(filters[0]["data"]["application"]["name"]))
 
         # Configura tratamento de exceções
-        maxNumberOfRetrys = 10
+        maxNumberOfRetrys = 8
         retrys = 0
         sleepSecondsMultiply = 3
         
@@ -49,8 +49,8 @@ class Crawler:
         
         # Executa coleta
         feedList = []
-        pageCounter = 0
-        #mediaCounter = 0
+        pageCount = 0
+        #mediaCount = 0
         nextUserRecentMediaPage = ""
         while (nextUserRecentMediaPage is not None):
             while (True):
@@ -85,9 +85,9 @@ class Crawler:
                     retrys = 0
                     sleepSecondsMultiply = 3
                     if (userRecentMedia):
-                        pageCounter += 1
-                        #mediaCounter += len(userRecentMedia)
-                        echo.default(u"Collecting feed page %d of user %s." % (pageCounter, resourceID))
+                        pageCount += 1
+                        #mediaCount += len(userRecentMedia)
+                        echo.default(u"Collecting feed page %d of user %s." % (pageCount, resourceID))
                         feedList.extend(userRecentMedia) 
                     break
         
@@ -104,7 +104,7 @@ class Crawler:
         return ({#"crawler_name": socket.gethostname(), 
                 "response_code": responseCode}, 
                 #"response_string": responseString},
-                #"media_count": mediaCounter},
+                #"media_count": mediaCount},
                 extraInfo,
                 None)
         

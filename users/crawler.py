@@ -34,7 +34,7 @@ class Crawler:
         echo.default(u"App: %s." % str(filters[0]["data"]["application"]["name"]))
 
         # Configura tratamento de exceções
-        maxNumberOfRetrys = 10
+        maxNumberOfRetrys = 8
         retrys = 0
         sleepSecondsMultiply = 3
         
