@@ -24,7 +24,9 @@ class Crawler:
     #   -5 => APINotFoundError - this user does not exist
     def crawl(self, resourceID, filters):
         responseCode = 3
+        
         echo = common.EchoHandler(self.config)
+        echo.default(u"User ID received: %s." % resourceID)
     
         # Constrói objeto da API com as credenciais de acesso
         clientID = filters[0]["data"]["application"]["clientid"]
@@ -53,6 +55,8 @@ class Crawler:
         #mediaCount = 0
         nextUserRecentMediaPage = ""
         while (nextUserRecentMediaPage is not None):
+            pageCount += 1
+            echo.default(u"Collecting feed page %d." % pageCount)
             while (True):
                 try:
                     # Executa requisição na API para obter mídias do feed do usuário
@@ -85,9 +89,7 @@ class Crawler:
                     retrys = 0
                     sleepSecondsMultiply = 3
                     if (userRecentMedia):
-                        pageCount += 1
                         #mediaCount += len(userRecentMedia)
-                        echo.default(u"Collecting feed page %d of user %s." % (pageCount, resourceID))
                         feedList.extend(userRecentMedia) 
                     break
         

@@ -59,6 +59,7 @@ docs/_build/
 *.xml
 *.json
 *.csv
+*.txt
 config.py
 
 
