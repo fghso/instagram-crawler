@@ -54,7 +54,6 @@ class ServerHandler(SocketServer.BaseRequestHandler):
         
         # Define some class variables
         self.clientID = 0
-        self.persist = None
         self.cleanUpThread = False
     
         # Get network handler instance
@@ -68,18 +67,10 @@ class ServerHandler(SocketServer.BaseRequestHandler):
                     self.client.send({"command": "REFUSED", "reason": "Connection not allowed due to critical operations being performed to %s server." % ("shut down" if (self.server.state == "shutting down") else "finish")})
                     return
                 connections += 1
-        
-            # Get persistence handler instance
-            persistenceHandlerOptions = deepcopy(self.server.config["persistence"]["handler"])
-            self.persist = self.server.PersistenceHandlerClass(persistenceHandlerOptions)
-            
-            # Get filters instances
-            self.parallelFilters = []
-            self.sequentialFilters = []
-            for i, FilterClass in enumerate(self.server.FiltersClasses):
-                filterOptions = deepcopy(self.server.config["server"]["filter"][i])
-                if (filterOptions["parallel"]): self.parallelFilters.append(FilterClass(filterOptions))
-                else: self.sequentialFilters.append(FilterClass(filterOptions))
+                
+            self.server.persist.setup()
+            for filter in self.server.parallelFilters: filter.setup()
+            for filter in self.server.sequentialFilters: filter.setup()
             
             if (message["type"] == "client"):
                 # Set client ID and other informations
@@ -89,7 +80,7 @@ class ServerHandler(SocketServer.BaseRequestHandler):
                 nextFreeID += 1
                 clientsThreads[self.clientID ] = (threading.current_thread(), threading.Event())
                 clientsInfo[self.clientID ] = [clientAddress, clientPid, None, None, -1, datetime.now(), None]
-                self.server.echo.default("New client connected: %d" % self.clientID)
+                self.server.echo.out("New client connected: %d" % self.clientID)
 
             self.connectionAccepted = True
             self.client.send({"command": "ACCEPTED", "clientid": self.clientID})
@@ -105,10 +96,10 @@ class ServerHandler(SocketServer.BaseRequestHandler):
         # Define some local variables
         config = self.server.config
         echo = self.server.echo
+        persist = self.server.persist
+        status = persistence.StatusCodes()
         client = self.client
         clientID = self.clientID
-        persist = self.persist
-        status = persistence.StatusCodes()
         
         # Set timing variables initial values
         serverAggregatedTimes[clientID] = 0.0
@@ -133,7 +124,7 @@ class ServerHandler(SocketServer.BaseRequestHandler):
                 # Stop thread execution if the connection has been interrupted
                 if (not message): 
                     clientResourceKey = clientsInfo[clientID][2]
-                    echo.default("Connection to client %d has been abruptly closed." % clientID, "ERROR")
+                    echo.out("Connection to client %d has been abruptly closed." % clientID, "ERROR")
                     persist.update(clientResourceKey, status.ERROR, None)
                     running = False
                     continue
@@ -168,7 +159,7 @@ class ServerHandler(SocketServer.BaseRequestHandler):
                                 else:
                                     with shutdownLock: 
                                         if (self.server.state == "running"): 
-                                            echo.default("Task done, finishing clients...")
+                                            echo.out("Task done, finishing clients...")
                                             self.server.state = "finishing"
                                             for ID in clientsInfo.keys(): self.removeClient(ID)
                                             self.cleanUpThread = True
@@ -178,13 +169,13 @@ class ServerHandler(SocketServer.BaseRequestHandler):
                             del clientsInfo[clientID]
                             if (self.server.state == "running"):
                                 client.send({"command": "FINISH", "reason": "removed"})
-                                echo.default("Client %d removed." % clientID)
+                                echo.out("Client %d removed." % clientID)
                             else:
                                 if (self.server.state == "finishing"): 
                                     client.send({"command": "FINISH", "reason": "task done"})
                                 elif (self.server.state == "shutting down"): 
                                     client.send({"command": "FINISH", "reason": "shut down"})
-                                echo.default("Client %d finished." % clientID)
+                                echo.out("Client %d finished." % clientID)
                             running = False
                     
                 elif (command == "DONE_ID"):
@@ -202,11 +193,11 @@ class ServerHandler(SocketServer.BaseRequestHandler):
                     clientResourceKey = clientsInfo[clientID][2]
                     clientResourceID = clientsInfo[clientID][3]
                     if (message["type"] == "fail"):
-                        echo.default("Client %s reported fail for resource %s." % (clientID, clientResourceID), "WARNING")
+                        echo.out("Client %s reported fail for resource %s." % (clientID, clientResourceID), "WARNING")
                         persist.update(clientResourceKey, status.FAILED, None)
                         client.send({"command": "EXCEPTION_RET"})
                     elif (message["type"] == "error"):
-                        echo.default("Client %s reported error for resource %s. Connection closed." % (clientID, clientResourceID), "ERROR")
+                        echo.out("Client %s reported error for resource %s. Connection closed." % (clientID, clientResourceID), "ERROR")
                         persist.update(clientResourceKey, status.ERROR, None)
                         running = False
                                     
@@ -281,7 +272,7 @@ class ServerHandler(SocketServer.BaseRequestHandler):
                 elif (command == "SHUTDOWN"):
                     with shutdownLock:
                         if (self.server.state == "running"):
-                            echo.default("Finishing all clients to shut down...")
+                            echo.out("Finishing all clients to shut down...")
                             self.server.state = "shutting down"
                             for ID in clientsInfo.keys(): self.removeClient(ID)
                             self.cleanUpThread = True
@@ -297,33 +288,22 @@ class ServerHandler(SocketServer.BaseRequestHandler):
                     crawlerAggregatedTimes[clientID] += (endCrawlerTime - startCrawlerTime)
                     numCrawlingMeasures[clientID] += 1
                     
-            except Exception as error:
-                echo.exception("Exception while processing a request from client %d. Execution of thread '%s' aborted." % (clientID, threading.current_thread().name))
-                # if (config["server"]["verbose"]): 
-                    # print "ERROR: %s" % str(error)
-                    # excType, excObj, excTb = sys.exc_info()
-                    # fileName = os.path.split(excTb.tb_frame.f_code.co_filename)[1]
-                    # print (excType, fileName, excTb.tb_lineno)
+            except:
+                echo.out("Exception while processing a request from client %d. Execution of thread '%s' aborted." % (clientID, threading.current_thread().name), "EXCEPTION")
                 running = False
     
     def finish(self):
         if (self.connectionAccepted):
             global connections
         
-            for filter in self.parallelFilters: filter.finish()
-            for filter in self.sequentialFilters: filter.finish()
-            self.persist.finish()
+            for filter in self.server.parallelFilters: filter.finish()
+            for filter in self.server.sequentialFilters: filter.finish()
+            self.server.persist.finish()
             
-            # Free resources allocated by persistence and filter objects after all clients and managers have finished
             if (self.cleanUpThread):
                 with finishedCondition:
                     while (connections > 1): finishedCondition.wait()
                     cleanUpEvent.set()
-                self.server.echo.default("Shutting down filters...")
-                for filter in self.parallelFilters: filter.shutdown()
-                for filter in self.sequentialFilters: filter.shutdown()
-                self.server.echo.default("Shutting down persistence handler...")
-                self.persist.shutdown()
                 self.server.shutdown()
                 if (self.clientID == 0): self.client.send({"command": "SD_RET", "fail": False})
                 
@@ -339,20 +319,20 @@ class ServerHandler(SocketServer.BaseRequestHandler):
                     clientsThreads[ID][1].set()
                 else:
                     del clientsInfo[ID]
-                    self.server.echo.default("Client %d removed." % ID)
+                    self.server.echo.out("Client %d removed." % ID)
                 return True
             return False
                 
     def threadedFilterApplyWrapper(self, filter, resourceID, resourceInfo, outputList):
         data = filter.apply(resourceID, deepcopy(resourceInfo), None)
-        outputList.append({"filter": filter.name(), "order": None, "data": data})
+        outputList.append({"filter": filter.name, "order": None, "data": data})
         
     def threadedFilterCallbackWrapper(self, filter, resourceID, resourceInfo, newResources, extraInfo):
         filter.callback(resourceID, deepcopy(resourceInfo), deepcopy(newResources), deepcopy(extraInfo))
                 
     def applyFilters(self, resourceID, resourceInfo):
-        parallelFilters = self.parallelFilters
-        sequentialFilters = self.sequentialFilters
+        parallelFilters = self.server.parallelFilters
+        sequentialFilters = self.server.sequentialFilters
         filtersData = []
     
         # Start threaded filters
@@ -366,7 +346,7 @@ class ServerHandler(SocketServer.BaseRequestHandler):
         extraInfo = {}
         for filter in sequentialFilters:
             data = filter.apply(resourceID, deepcopy(resourceInfo), extraInfo)
-            filtersData.append({"name": filter.name(), "order": sequentialFilters.index(filter), "data": data})
+            filtersData.append({"name": filter.name, "order": sequentialFilters.index(filter), "data": data})
             
         # Wait for threaded filters to finish
         for filter in filterThreads:
@@ -375,8 +355,8 @@ class ServerHandler(SocketServer.BaseRequestHandler):
         return (filtersData if (filtersData) else None)
         
     def callbackFilters(self, resourceID, resourceInfo, extraInfo, newResources):
-        parallelFilters = self.parallelFilters
-        sequentialFilters = self.sequentialFilters
+        parallelFilters = self.server.parallelFilters
+        sequentialFilters = self.server.sequentialFilters
     
         # Start threaded filters
         filterThreads = []
@@ -403,10 +383,21 @@ class ThreadedTCPServer(SocketServer.ThreadingMixIn, SocketServer.TCPServer):
         # Configure echoing
         self.echo = common.EchoHandler(self.config["server"], "server[%s%s].log" % (socket.gethostname(), self.config["global"]["connection"]["port"]))
         
-        # Get persistence handler and filters classes
-        self.PersistenceHandlerClass = getattr(persistence, self.config["persistence"]["handler"]["class"])
-        self.FiltersClasses = [getattr(filters, filter["class"]) for filter in self.config["server"]["filter"]]
-                                
+        # Get persistence handler instance
+        self.echo.out("Initializing persistence handler...")
+        PersistenceHandlerClass = getattr(persistence, self.config["server"]["persistence"]["handler"]["class"])
+        self.persist = PersistenceHandlerClass(self.config["server"]["persistence"]["handler"])
+        
+        # Get filters instances
+        self.echo.out("Initializing filters...")
+        self.parallelFilters = []
+        self.sequentialFilters = []
+        self.FiltersClasses = [getattr(filters, filter["class"]) for filter in self.config["server"]["filtering"]["filter"]]
+        for i, FilterClass in enumerate(self.FiltersClasses):
+            filterOptions = self.config["server"]["filtering"]["filter"][i]
+            if (filterOptions["parallel"]): self.parallelFilters.append(FilterClass(filterOptions))
+            else: self.sequentialFilters.append(FilterClass(filterOptions))
+        
         # Call SocketSever constructor
         SocketServer.TCPServer.__init__(self, (self.config["global"]["connection"]["address"], self.config["global"]["connection"]["port"]), ServerHandler)
     
@@ -414,9 +405,19 @@ class ThreadedTCPServer(SocketServer.ThreadingMixIn, SocketServer.TCPServer):
         self.startTime = datetime.now()
         self.state = "running"
         
-        self.echo.default("Server ready. Waiting for connections...")
+        self.echo.out("Server ready. Waiting for connections...")
         self.serve_forever()
         
-        if (self.state == "finishing"): self.echo.default("Server finished." )
-        else: self.echo.default("Server manually shut down.")
+        if (self.state == "finishing"): self.echo.out("Server finished." )
+        else: self.echo.out("Server manually shut down.")
+        
+    def shutdown(self):
+        self.echo.out("Shutting down filters...")
+        for filter in self.parallelFilters: filter.shutdown()
+        for filter in self.sequentialFilters: filter.shutdown()
+        
+        self.echo.out("Shutting down persistence handler...")
+        self.persist.shutdown()
             
+        SocketServer.TCPServer.shutdown(self)
+        

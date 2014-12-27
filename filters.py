@@ -9,7 +9,7 @@ import json
 import csv
 import random
 import common
-from collections import OrderedDict
+import persistence
 
 
 # The filters are sequentially applied in the same order in wich they were specified in the configuration file, 
@@ -21,32 +21,47 @@ class BaseFilter():
         
     def _extractConfig(self, configurationsDictionary):
         self.config = configurationsDictionary
+        if ("name" in self.config): self.name = self.config["name"]
+        else: self.name = self.__class__.__name__
     
-        if ("name" in self.config): self._name = self.config["name"]
-        else: self._name = self.__class__.__name__
-    
-    def name(self): return self._name
+    def setup(self): pass # Called when a connection to a client is opened
  
     # Apply must return a dictionary containing the desired filter information to be sent to clients. 
     # The parameter extraInfo is a reference to a dictionary and can be used to pass information among 
     # sequential filters. It is not send to clients and its value will always be None if the filter is 
     # executed in parallel
-    def apply(self, resourceID, resourceInfo, extraInfo):
-        return resourceInfo
+    def apply(self, resourceID, resourceInfo, extraInfo): return {}
         
     # Callback is called when a client is done in crawling its designated resource. Sequential filters
     # receive the parameters resourceInfo, newResources and extraInfo as references, so they can alter 
     # the values of these parameters. The server will store the final values of resourceInfo and newResources
     # as they are after all filters were called back. Parallel filters receive just a copy of the values 
-    # of these three parameters. As in apply method, extraInfo can be used to pass information among sequential 
-    # filters. The information received from crawler can be accessed in extraInfo["original"]. 
-    def callback(self, resourceID, resourceInfo, newResources, extraInfo):
-        pass
+    # of these three parameters as they came from crawler. As in apply method, extraInfo can be used to pass 
+    # information among sequential filters (in the case of sequential filters, the original information received 
+    # from crawler is stored in extraInfo["original"], so it is available at any time). 
+    def callback(self, resourceID, resourceInfo, newResources, extraInfo): pass
         
     def finish(self): pass # Called when a connection to a client is finished
     def shutdown(self): pass # Called when server is shut down, allowing to free shared resources
-
-
+    
+    
+class SaveResourcesFilter(BaseFilter): 
+    def __init__(self, configurationsDictionary): 
+        BaseFilter.__init__(self, configurationsDictionary)
+        PersistenceHandlerClass = getattr(persistence, self.config["handler"]["class"])
+        self.persist = PersistenceHandlerClass(self.config["handler"])
+        
+    def setup(self): self.persist.setup()
+        
+    def callback(self, resourceID, resourceInfo, newResources, extraInfo):
+        if (self.config["parallel"]): newResources = extraInfo[self.name]
+        else: newResources = extraInfo["original"][self.name]
+        self.persist.insert(newResources)
+        
+    def finish(self): self.persist.finish()
+    def shutdown(self): self.persist.shutdown()
+    
+    
 class InstagramAppFilter(BaseFilter):
     appRates = {}
     zeroAppRates = []
@@ -60,7 +75,6 @@ class InstagramAppFilter(BaseFilter):
         
     def _extractConfig(self, configurationsDictionary):
         BaseFilter._extractConfig(self, configurationsDictionary)
-        
         self.config["appsfile"] = self.config["appsfile"].encode("utf-8")
         self.config["resetpercent"] = float(self.config["resetpercent"]) / 100
         self.config["sleeptimedelta"] = int(self.config["sleeptimedelta"])
@@ -77,7 +91,7 @@ class InstagramAppFilter(BaseFilter):
             if (self.config["method"] == "maxpost"):
                 percentZeroAppRates = float(len(self.zeroAppRates)) / len(self.appRates)
                 if (percentZeroAppRates > self.config["resetpercent"]):
-                    self.echo.default(u"Maximum number of applications with ratelimit exceeded hit, making requests now to check actual ratelimits.", "WARNING")
+                    self.echo.out(u"Maximum number of applications with ratelimit exceeded hit, making requests now to check actual ratelimits.", "WARNING")
                     for appName in self.zeroAppRates[:]:
                         appIndex = self.appIndexes[appName]
                         self.appRates[appName] = self._getAppRate(self.applicationList[appIndex])
@@ -95,10 +109,10 @@ class InstagramAppFilter(BaseFilter):
                             maxRate = rateRemaining
                             appIndex = i
                     if (maxRate == 0): 
-                        self.echo.default(u"Ratelimit of all applications exceeded, sleeping now for %d seconds..." % self.config["sleeptimedelta"], "WARNING")
+                        self.echo.out(u"Ratelimit of all applications exceeded, sleeping now for %d seconds..." % self.config["sleeptimedelta"], "WARNING")
                         time.sleep(self.config["sleeptimedelta"])
                     else: break
-        return OrderedDict([("application", self.applicationList[appIndex])])
+        return {"application": self.applicationList[appIndex]}
         
     def callback(self, resourceID, resourceInfo, newResources, extraInfo):
         appName = extraInfo["original"]["application"]["name"]
@@ -143,12 +157,12 @@ class InstagramAppFilter(BaseFilter):
             rateRemaining = int(header["x-ratelimit-remaining"])
         except:
             if (header['status'] == '503') or (header['status'] == '429'):
-                self.echo.default(u"Ratelimit of %s exceeded." % application["name"], "WARNING")
+                self.echo.out(u"Ratelimit of %s exceeded." % application["name"], "WARNING")
             else:
                 message = u"Request to check ratelimit of %s failed.\n" % application["name"]
                 message += u"Header: %s\n" % header
                 message += u"Content: %s\n" % content
-                self.echo.default(message, "ERROR")
+                self.echo.out(message, "ERROR")
         return rateRemaining  
                 
     # Funções apenas para testes
@@ -172,8 +186,9 @@ class InstagramAppFilter(BaseFilter):
 # ====== Testes ===== 
 if __name__ == "__main__":
     #print InstagramAppFilter()._spendRandomRate(50)
-    #print InstagramAppFilter()._spendSpecificRate("CampsApp18", 1)
+    #print InstagramAppFilter()._spendSpecificRate("CampsApp1", 1)
     print InstagramAppFilter({"name": None, 
-                              "appsfile": "apps.json", 
+                              "appsfile": "apps.csv", 
                               "dynamicallyload": "False",
                               "method": "maxpost",}).apply(None, None, None)
+                              

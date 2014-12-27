@@ -47,13 +47,7 @@ class Crawler:
         
         # Determina mídias a serem coletadas
         feedSampleSize = 10
-        feedList = []
-        if (len(feed) <= feedSampleSize): 
-            feedList = feed
-        else: 
-            for i in range(feedSampleSize):
-                media = random.randint(0, len(feed) - 1)
-                feedList.append(feed[media])
+        feedList = random.sample(feed, min(len(feed),feedSampleSize))
         
         # Executa coleta
         attributes = ["gender", "age", "race", "smiling", "glass", "pose"]
@@ -61,7 +55,7 @@ class Crawler:
         for i, media in enumerate(feedList):
             echo.default(u"Collecting media %d." % (i + 1))
             while (True):
-                try: 
+                try:
                     response = api.detection.detect(url = media["images"]["standard_resolution"]["url"], attribute = attributes)
                 except APIError as error:
                     # Se o erro não for INTERNAL_ERROR ou SERVER_TOO_BUSY, apenas reporta e prossegue
@@ -83,15 +77,12 @@ class Crawler:
                 else:
                     retrys = 0
                     sleepSecondsMultiply = 3
-                    fppFilePath = os.path.join(fppDataDir, "%s.fpp" % resourceID)
+                    fppFilePath = os.path.join(fppDataDir, "%s.fpp" % media["id"])
                     with open(fppFilePath, "w") as fppFile: json.dump(response, fppFile)
                     individualResponseCodes.append((media["id"], {"response_code": 200}))
                     break
-        
-        print individualResponseCodes
         
         return ({#"crawler_name": socket.gethostname(), 
                 "response_code": globalResponseCode}, 
                 None,
                 individualResponseCodes)
-        
