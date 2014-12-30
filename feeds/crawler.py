@@ -22,17 +22,19 @@ class Crawler:
     #    3 => Coleta bem sucedida
     #   -4 => APINotAllowedError - you cannot view this resource
     #   -5 => APINotFoundError - this user does not exist
-    def crawl(self, resourceID, filters):
-        responseCode = 3
-        
+    def crawl(self, resourceID, filters):      
         echo = common.EchoHandler(self.config)
-        echo.default(u"User ID received: %s." % resourceID)
+        echo.out(u"User ID received: %s." % resourceID)
+        
+        # Extrai filtros
+        for f in filters: 
+            if (f["name"] == "InstagramAppFilter"): application = f["data"]["application"]
     
         # Constrói objeto da API com as credenciais de acesso
-        clientID = filters[0]["data"]["application"]["clientid"]
-        clientSecret = filters[0]["data"]["application"]["clientsecret"]
+        clientID = application["clientid"]
+        clientSecret = application["clientsecret"]
         api = InstagramAPI(client_id = clientID, client_secret = clientSecret)
-        echo.default(u"App: %s." % str(filters[0]["data"]["application"]["name"]))
+        echo.out(u"App: %s." % str(application["name"]))
 
         # Configura tratamento de exceções
         maxNumberOfRetrys = 8
@@ -40,7 +42,7 @@ class Crawler:
         sleepSecondsMultiply = 3
         
         # Configura diretórios base para armazenamento
-        feedsBaseDir = "data/feeds"
+        feedsBaseDir = "../../data/feeds"
         feedsDataDir = os.path.join(feedsBaseDir, str(resourceID % 1000))
         if not os.path.exists(feedsDataDir): os.makedirs(feedsDataDir)
         
@@ -49,6 +51,10 @@ class Crawler:
         #minTimestamp = calendar.timegm(timeInterval.utctimetuple())
         minTimestamp = 1322697600 # = 12/01/2011 @ 12:00am (UTC)
         
+        # Inicializa variáveis de retorno
+        responseCode = 3
+        extraInfo = {"InstagramAppFilter": {}, "SaveResourcesFilter": []}
+        
         # Executa coleta
         feedList = []
         pageCount = 0
@@ -56,22 +62,20 @@ class Crawler:
         nextUserRecentMediaPage = ""
         while (nextUserRecentMediaPage is not None):
             pageCount += 1
-            echo.default(u"Collecting feed page %d." % pageCount)
+            echo.out(u"Collecting feed page %d." % pageCount)
             while (True):
                 try:
                     # Executa requisição na API para obter mídias do feed do usuário
                     userRecentMedia, nextUserRecentMediaPage = api.user_recent_media(count=35, user_id=resourceID, return_json=True, with_next_url=nextUserRecentMediaPage, min_timestamp=minTimestamp)
                 except (InstagramAPIError, InstagramClientError) as error:
                     if (error.status_code == 400):
-                        # Se o usuário tiver o perfil privado ou não existir, captura exceção e marca erro no banco de dados
+                        # Se o usuário tiver o perfil privado ou não existir, captura exceção e reporta erro
                         if (error.error_type == "APINotAllowedError"):
                             responseCode = -4
-                            responseString = "APINotAllowedError"
                             nextUserRecentMediaPage = None
                             break
                         elif (error.error_type == "APINotFoundError"):
                             responseCode = -5
-                            responseString = "APINotFoundError"
                             nextUserRecentMediaPage = None
                             break
                     else:
@@ -79,7 +83,7 @@ class Crawler:
                         # experimenta aguardar um certo tempo antes da próxima tentativa 
                         if (retrys < maxNumberOfRetrys):
                             sleepSeconds = 2 ** sleepSecondsMultiply
-                            echo.exception(u"API call error. Trying again in %02d second(s)." % sleepSeconds)
+                            echo.out(u"API call error. Trying again in %02d second(s)." % sleepSeconds, "EXCEPTION")
                             time.sleep(sleepSeconds)
                             sleepSecondsMultiply += 1
                             retrys += 1
@@ -91,6 +95,13 @@ class Crawler:
                     if (userRecentMedia):
                         #mediaCount += len(userRecentMedia)
                         feedList.extend(userRecentMedia) 
+                        
+                        # Extrai dados das mídias para enviar de volta ao SaveResourcesFilter
+                        for media in userRecentMedia:
+                            mediaInfo = {"type": media["type"], 
+                                         "url": media["images"]["standard_resolution"]["url"]}
+                            extraInfo["SaveResourcesFilter"].append((media["id"], mediaInfo))
+                        
                     break
         
         # Salva arquivo JSON com informações sobre as mídias do feed do usuário
@@ -99,13 +110,11 @@ class Crawler:
         output.close()
         
         # Obtém rate remaining para enviar de volta ao InstagramAppFilter
-        extraInfo = {"application": {}}
-        extraInfo["application"]["name"] = filters[0]["data"]["application"]["name"]
-        extraInfo["application"]["rate"] = int(api.x_ratelimit_remaining)
+        extraInfo["InstagramAppFilter"]["appname"] = application["name"]
+        extraInfo["InstagramAppFilter"]["apprate"] = int(api.x_ratelimit_remaining)
 
         return ({#"crawler_name": socket.gethostname(), 
                 "response_code": responseCode}, 
-                #"response_string": responseString},
                 #"media_count": mediaCount},
                 extraInfo,
                 None)

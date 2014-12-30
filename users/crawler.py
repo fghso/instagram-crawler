@@ -21,17 +21,19 @@ class Crawler:
     #   -4 => APINotAllowedError - you cannot view this resource
     #   -5 => APINotFoundError - this user does not exist
     def crawl(self, resourceID, filters):
-        responseCode = 3
-        responseString = "OK"
-        
         echo = common.EchoHandler(self.config)
-        echo.default(u"User ID received: %s." % resourceID)
+        echo.out(u"User ID received: %s." % resourceID)
         
+        # Extrai filtros
+        # for f in filters: 
+            # if (f["name"] == "InstagramAppFilter"): application = f["data"]["application"]
+        application = filters[0]["data"]["application"]
+            
         # Constrói objeto da API com as credenciais de acesso
-        clientID = filters[0]["data"]["application"]["clientid"]
-        clientSecret = filters[0]["data"]["application"]["clientsecret"]
+        clientID = application["clientid"]
+        clientSecret = application["clientsecret"]
         api = InstagramAPI(client_id = clientID, client_secret = clientSecret)
-        echo.default(u"App: %s." % str(filters[0]["data"]["application"]["name"]))
+        echo.out(u"App: %s." % str(application["name"]))
 
         # Configura tratamento de exceções
         maxNumberOfRetrys = 8
@@ -39,8 +41,13 @@ class Crawler:
         sleepSecondsMultiply = 3
         
         # Configura diretório base para armazenamento
-        usersDataDir = "data/users"
+        usersDataDir = "../../data/users"
         if not os.path.exists(usersDataDir): os.makedirs(usersDataDir)
+        
+        # Inicializa variáveis de retorno
+        responseCode = 3
+        #extraInfo = {"InstagramAppFilter": {}, "SaveResourcesFilter": []}
+        extraInfo = {"InstagramAppFilter": {}}
         
         # Executa coleta
         while (True):
@@ -48,21 +55,19 @@ class Crawler:
                 userInfo = api.user(user_id=resourceID, return_json=True)
             except (InstagramAPIError, InstagramClientError) as error:
                 if (error.status_code == 400):
-                    # Se o usuário tiver o perfil privado ou não existir, captura exceção e marca erro no banco de dados
+                    # Se o usuário tiver o perfil privado ou não existir, captura exceção e reporta erro
                     if (error.error_type == "APINotAllowedError"):
                         responseCode = -4
-                        responseString = "APINotAllowedError"
                         break
                     elif (error.error_type == "APINotFoundError"):
                         responseCode = -5
-                        responseString = "APINotFoundError"
                         break
                 else:
                     # Caso o número de tentativas não tenha ultrapassado o máximo,
                     # experimenta aguardar um certo tempo antes da próxima tentativa 
                     if (retrys < maxNumberOfRetrys):
                         sleepSeconds = 2 ** sleepSecondsMultiply
-                        echo.exception(u"API call error. Trying again in %02d second(s)." % sleepSeconds, "WARNING")
+                        echo.out(u"API call error. Trying again in %02d second(s)." % sleepSeconds, "EXCEPTION")
                         time.sleep(sleepSeconds)
                         sleepSecondsMultiply += 1
                         retrys += 1
@@ -73,16 +78,21 @@ class Crawler:
                 output = open(os.path.join(usersDataDir, "%s.user" % resourceID), "w")
                 json.dump(userInfo, output)
                 output.close()
+                
+                # Extrai contadores do usuário para enviar de volta ao SaveResourcesFilter       
+                # userCounts = {"counts_media": userInfo["counts"]["media"], 
+                              # "counts_follows": userInfo["counts"]["follows"], 
+                              # "counts_followedby": userInfo["counts"]["followed_by"]}
+                # extraInfo["SaveResourcesFilter"].append((resourceID, userCounts))
+                
                 break
 
         # Obtém rate remaining para enviar de volta ao InstagramAppFilter
-        extraInfo = {"application": {}}
-        extraInfo["application"]["name"] = filters[0]["data"]["application"]["name"]
-        extraInfo["application"]["rate"] = int(api.x_ratelimit_remaining)
-                
-        return ({"crawler_name": socket.gethostname(), 
-                "response_code": responseCode, 
-                "response_string": responseString},
+        extraInfo["InstagramAppFilter"]["appname"] = application["name"]
+        extraInfo["InstagramAppFilter"]["apprate"] = int(api.x_ratelimit_remaining)
+        
+        return ({#"crawler_name": socket.gethostname(), 
+                "response_code": responseCode},
                 extraInfo,
                 None)
         

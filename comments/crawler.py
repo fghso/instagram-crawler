@@ -1,97 +1,101 @@
 # -*- coding: iso-8859-1 -*-
 
 import os
+import socket
 import json
 import time
-import logging
+import common
+from datetime import datetime
+from datetime import timedelta
 from instagram.client import InstagramAPI
 from instagram.bind import InstagramAPIError
-import app
+from instagram.bind import InstagramClientError
 
 
 class Crawler:
-    # Retorna o nome que identifica o coletor
-    def getName:
-        return app.name
-        
+    # Upon initialization the crawler object receives a copy of everything in the client 
+    # section of the XML configuration file as the parameter configurationsDictionary
+    def __init__(self, configurationsDictionary):
+        self.config = configurationsDictionary
+
     # Valores de retorno:
-    #   2 => Coleta bem sucedida
-    #   3 => Coleta parcialmente bem sucedida
-    def crawl(self, resourceID):
-        status = 2
-        amount = 0
+    #    3 => Coleta bem sucedida
+    #   -4 => Erro em alguma das mídias
+    def crawl(self, resourceID, filters):      
+        echo = common.EchoHandler(self.config)
+        echo.out(u"User ID received: %s." % resourceID)
+        
+        # Extrai filtros
+        # for f in filters: 
+            # if (f["name"] == "InstagramAppFilter"): application = f["data"]["application"]
+        application = filters[0]["data"]["application"]
     
         # Constrói objeto da API com as credenciais de acesso
-        api = InstagramAPI(client_id = app.clientID, client_secret = app.clientSecret)
-    
-        # Configura logging
-        logging.basicConfig(format="%(asctime)s %(levelname)s: %(message)s", datefmt="%d/%m/%Y %H:%M:%S", 
-                            filename="InstagramCommentsCrawler[%s].log" % app.name, filemode="w", level=logging.INFO)
-    
+        clientID = application["clientid"]
+        clientSecret = application["clientsecret"]
+        api = InstagramAPI(client_id = clientID, client_secret = clientSecret)
+        echo.out(u"App: %s." % str(application["name"]))
+
         # Configura tratamento de exceções
-        maxNumberOfRetrys = 10
+        maxNumberOfRetrys = 8
         retrys = 0
-        sleepSecondsMultiply = 0
-    
-        # Executa coleta dos comentários
-        dirFeed = "../CrawledData/Feeds/%s/" % resourceID
-        for fileName in os.listdir(dirFeed):
-            fileObj = open(dirFeed + fileName, "r")
-            input = json.load(fileObj)
-            fileObj.close()
-            
-            # Cria diretório para armazenar comentários
-            dirComments = "../CrawledData/Comments/%s" % resourceID
-            if not os.path.exists(dirComments):
-                os.makedirs(dirComments)
-            
-            for mediaInfo in input:
-                if (mediaInfo["comments"]["count"] > 0):
-                    while(True):
-                        try:
-                            # Executa requisição na API para obter os comentários da mídia
-                            mediaComments = api.media_comments(media_id=mediaInfo["id"], return_json=True)
-                        except InstagramAPIError as err:
-                            if err.error_type == "APINotFoundError":
-                                status = 3
-                                break
-                            else:
-                                # Caso o número de tentativas não tenha ultrapassado o máximo,
-                                # experimenta aguardar um certo tempo antes da próxima tentativa
-                                if (retrys < maxNumberOfRetrys):
-                                    sleepSeconds = 2 ** sleepSecondsMultiply
-                                    logging.warning(u"Erro no cliente. Tentando novamente em %02d segundo(s). [Mídia: %s - Path: %s]" % (sleepSeconds, mediaInfo["id"], dirFeed + fileName))
-                                    time.sleep(sleepSeconds)
-                                    sleepSecondsMultiply += 1
-                                    retrys += 1
-                                    continue
-                                else:
-                                    logging.exception(u"Erro no cliente. Execução abortada. [Mídia: %s - Path: %s]" % (mediaInfo["id"], dirFeed + fileName))
-                                    raise
-                        except:
-                            # Caso o número de tentativas não tenha ultrapassado o máximo,
-                            # experimenta aguardar um certo tempo antes da próxima tentativa
-                            if (retrys < maxNumberOfRetrys):
-                                sleepSeconds = 2 ** sleepSecondsMultiply
-                                logging.warning(u"Erro no cliente. Tentando novamente em %02d segundo(s). [Mídia: %s - Path: %s]" % (sleepSeconds, mediaInfo["id"], dirFeed + fileName))
-                                time.sleep(sleepSeconds)
-                                sleepSecondsMultiply += 1
-                                retrys += 1
-                                continue
-                            else:
-                                logging.exception(u"Erro no cliente. Execução abortada. [Mídia: %s - Path: %s]" % (mediaInfo["id"], dirFeed + fileName))
-                                raise
-                        else:
-                            retrys = 0
-                            sleepSecondsMultiply = 0
-                        
-                            # Salva arquivo JSON com os comentários
-                            filename = "%s.json" % mediaInfo["id"]
-                            output = open(os.path.join(dirComments, filename), "w")
-                            json.dump(mediaComments, output)
-                            output.close()
-                            
-                            amount += 1
-                            break
+        sleepSecondsMultiply = 3
         
-        return (status, amount)
+        # Configura diretórios base para armazenamento
+        commentsBaseDir = "../../data/comments"
+        commentsDataDir = os.path.join(commentsBaseDir, str(resourceID % 1000))
+        if not os.path.exists(commentsDataDir): os.makedirs(commentsDataDir)
+        
+        # Carrega arquivo de feed do usuário
+        feedsBaseDir = "../../data/feeds"
+        feedsFilePath = os.path.join(feedsBaseDir, str(resourceID % 1000), "%s.feed" % resourceID)
+        with open(feedsFilePath, "r") as feedFile: feed = json.load(feedFile)
+        
+        # Inicializa variáveis de retorno
+        responseCode = 3
+        extraInfo = {"InstagramAppFilter": {}}
+        
+        # Executa coleta
+        comments = []
+        for media in feed:
+            echo.out(u"Media: %s." % media["id"])
+            while (True):
+                try:
+                    # Executa requisição na API para obter comentários da mídia
+                    mediaComments = api.media_comments(media_id=media["id"], return_json=True)
+                except (InstagramAPIError, InstagramClientError) as error:
+                    if (error.status_code == 400):
+                        echo.out(error, "ERROR")
+                        responseCode = -4
+                        break
+                    else:
+                        # Caso o número de tentativas não tenha ultrapassado o máximo,
+                        # experimenta aguardar um certo tempo antes da próxima tentativa 
+                        if (retrys < maxNumberOfRetrys):
+                            sleepSeconds = 2 ** sleepSecondsMultiply
+                            echo.out(u"API call error. Trying again in %02d second(s)." % sleepSeconds, "EXCEPTION")
+                            time.sleep(sleepSeconds)
+                            sleepSecondsMultiply += 1
+                            retrys += 1
+                        else:
+                            raise SystemExit("Maximum number of retrys exceeded.")
+                else:
+                    retrys = 0
+                    sleepSecondsMultiply = 3
+                    comments.extend(mediaComments)
+                    break
+        
+            # Salva arquivo JSON com informações sobre os comentários do feed do usuário
+            output = open(os.path.join(commentsDataDir, "%s.comments" % media["id"]), "w")
+            json.dump(feed, output)
+            output.close()
+        
+        # Obtém rate remaining para enviar de volta ao InstagramAppFilter
+        extraInfo["InstagramAppFilter"]["appname"] = application["name"]
+        extraInfo["InstagramAppFilter"]["apprate"] = int(api.x_ratelimit_remaining) if api.x_ratelimit_remaining else None
+
+        return ({#"crawler_name": socket.gethostname(), 
+                "response_code": responseCode}, 
+                extraInfo,
+                None)
+        

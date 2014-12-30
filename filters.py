@@ -2,11 +2,12 @@
 
 import sys
 import os
+import threading
 import httplib2
 import time
-import xmltodict
 import json
 import csv
+import xmltodict
 import random
 import common
 import persistence
@@ -63,22 +64,24 @@ class SaveResourcesFilter(BaseFilter):
     
     
 class InstagramAppFilter(BaseFilter):
-    appRates = {}
-    zeroAppRates = []
-
     def __init__(self, configurationsDictionary): 
         BaseFilter.__init__(self, configurationsDictionary)
         self.httpObj = httplib2.Http(disable_ssl_certificate_validation = True)
         self.echo = common.EchoHandler()
-        self.lastAppName = None
+        self.appRates = {}
+        self.zeroAppRates = []
+        self.local = threading.local()
         self._loadAppFile()
         
     def _extractConfig(self, configurationsDictionary):
         BaseFilter._extractConfig(self, configurationsDictionary)
         self.config["appsfile"] = self.config["appsfile"].encode("utf-8")
+        self.config["dynamicallyload"] = common.str2bool(self.config["dynamicallyload"])
         self.config["resetpercent"] = float(self.config["resetpercent"]) / 100
         self.config["sleeptimedelta"] = int(self.config["sleeptimedelta"])
         if (self.config["sleeptimedelta"] < 1): raise ValueError("Parameter sleeptimedelta must be greater than 1 second.")
+        
+    def setup(self): self.local.lastAppName = None
         
     def apply(self, resourceID, resourceInfo, extraInfo):
         if (self.config["dynamicallyload"]): self._loadAppFile()
@@ -97,10 +100,10 @@ class InstagramAppFilter(BaseFilter):
                         self.appRates[appName] = self._getAppRate(self.applicationList[appIndex])
                         self.zeroAppRates.remove(appName)
                 for appName, rateRemaining in self.appRates.iteritems():
-                    if (rateRemaining > maxRate) and (appName != self.lastAppName):
+                    if (rateRemaining > maxRate) and (appName != self.local.lastAppName):
                         maxRate = rateRemaining
                         appIndex = self.appIndexes[appName]
-                self.lastAppName = self.applicationList[appIndex]["name"]
+                self.local.lastAppName = self.applicationList[appIndex]["name"]
             else: 
                 while (True):
                     for i, application in enumerate(self.applicationList):
@@ -115,10 +118,10 @@ class InstagramAppFilter(BaseFilter):
         return {"application": self.applicationList[appIndex]}
         
     def callback(self, resourceID, resourceInfo, newResources, extraInfo):
-        appName = extraInfo["original"]["application"]["name"]
-        appRate = extraInfo["original"]["application"]["rate"]
+        appName = extraInfo["original"][self.name]["appname"]
+        appRate = extraInfo["original"][self.name]["apprate"]
         if (appRate == 0): self.zeroAppRates.append(appName)
-        self.appRates[appName] = appRate
+        elif (appRate is not None): self.appRates[appName] = appRate
         
     def _loadAppFile(self):
         # Open file
@@ -190,5 +193,7 @@ if __name__ == "__main__":
     print InstagramAppFilter({"name": None, 
                               "appsfile": "apps.csv", 
                               "dynamicallyload": "False",
-                              "method": "maxpost",}).apply(None, None, None)
+                              "method": "maxpost",
+                              "resetpercent": 50,
+                              "sleeptimedelta": 60}).apply(None, None, None)
                               

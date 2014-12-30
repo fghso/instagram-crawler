@@ -24,11 +24,8 @@ class Crawler:
     #    200 => Coleta bem sucedida
     #    4** => Ver lista de códigos HTTP ao final da página http://www.faceplusplus.com/detection_detect/
     def crawl(self, resourceID, filters):
-        globalResponseCode = 3
-        individualResponseCodes = []
-        
         echo = common.EchoHandler(self.config)
-        echo.default(u"User ID received: %s." % resourceID)
+        echo.out(u"User ID received: %s." % resourceID)
     
         # Configura tratamento de exceções
         maxNumberOfRetrys = 8
@@ -36,12 +33,12 @@ class Crawler:
         sleepSecondsMultiply = 3
         
         # Configura diretórios base para armazenamento
-        fppBaseDir = "data/fpp"
+        fppBaseDir = "../../data/fpp"
         fppDataDir = os.path.join(fppBaseDir, str(resourceID % 1000), str(resourceID))
         if not os.path.exists(fppDataDir): os.makedirs(fppDataDir)
         
         # Carrega arquivo de feed do usuário
-        feedsBaseDir = "data/feeds"
+        feedsBaseDir = "../../data/feeds"
         feedsFilePath = os.path.join(feedsBaseDir, str(resourceID % 1000), "%s.feed" % resourceID)
         with open(feedsFilePath, "r") as feedFile: feed = json.load(feedFile)
         
@@ -49,11 +46,15 @@ class Crawler:
         feedSampleSize = 10
         feedList = random.sample(feed, min(len(feed),feedSampleSize))
         
+        # Inicializa variáveis de retorno
+        globalResponseCode = 3
+        extraInfo = {"SaveResourcesFilter": []}
+        
         # Executa coleta
         attributes = ["gender", "age", "race", "smiling", "glass", "pose"]
         api = API(key = fpp.apikey.API_KEY, secret = fpp.apikey.API_SECRET, srv = fpp.apikey.SERVER)
         for i, media in enumerate(feedList):
-            echo.default(u"Collecting media %d." % (i + 1))
+            echo.out(u"Collecting media %d." % (i + 1))
             while (True):
                 try:
                     response = api.detection.detect(url = media["images"]["standard_resolution"]["url"], attribute = attributes)
@@ -61,14 +62,14 @@ class Crawler:
                     # Se o erro não for INTERNAL_ERROR ou SERVER_TOO_BUSY, apenas reporta e prossegue
                     if ((error.code != 500) and (error.code != 502)):
                         globalResponseCode = -4
-                        individualResponseCodes.append((media["id"], {"response_code": error.code}))
+                        extraInfo["SaveResourcesFilter"].append((media["id"], {"response_code": error.code}))
                         break
                     else:
                         # Caso o número de tentativas não tenha ultrapassado o máximo,
                         # experimenta aguardar um certo tempo antes da próxima tentativa 
                         if (retrys < maxNumberOfRetrys):
                             sleepSeconds = 2 ** sleepSecondsMultiply
-                            echo.exception(u"API call error. Trying again in %02d second(s)." % sleepSeconds)
+                            echo.out(u"API call error. Trying again in %02d second(s)." % sleepSeconds, "EXCEPTION")
                             time.sleep(sleepSeconds)
                             sleepSecondsMultiply += 1
                             retrys += 1
@@ -79,10 +80,10 @@ class Crawler:
                     sleepSecondsMultiply = 3
                     fppFilePath = os.path.join(fppDataDir, "%s.fpp" % media["id"])
                     with open(fppFilePath, "w") as fppFile: json.dump(response, fppFile)
-                    individualResponseCodes.append((media["id"], {"response_code": 200}))
+                    #extraInfo["SaveResourcesFilter"].append((media["id"], {"status": 2, "response_code": 200}))
                     break
         
         return ({#"crawler_name": socket.gethostname(), 
                 "response_code": globalResponseCode}, 
-                None,
-                individualResponseCodes)
+                extraInfo,
+                None)
