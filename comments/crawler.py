@@ -5,8 +5,6 @@ import socket
 import json
 import time
 import common
-from datetime import datetime
-from datetime import timedelta
 from instagram.client import InstagramAPI
 from instagram.bind import InstagramAPIError
 from instagram.bind import InstagramClientError
