@@ -12,17 +12,9 @@ from fpp.facepp import APIError
 
 
 class Crawler:
-    # Upon initialization the crawler object receives a copy of everything in the client 
-    # section of the XML configuration file as the parameter configurationsDictionary
     def __init__(self, configurationsDictionary):
         self.config = configurationsDictionary
-
-    # Valores de retorno globais:
-    #     3 => Coleta bem sucedida
-    #    -4 => Erro em alguma das mídias
-    # Valores de retorno individuais:
-    #    200 => Coleta bem sucedida
-    #    4** => Ver lista de códigos HTTP ao final da página http://www.faceplusplus.com/detection_detect/
+    
     def crawl(self, resourceID, filters):
         echo = common.EchoHandler(self.config)
         echo.out(u"User ID received: %s." % resourceID)
@@ -47,43 +39,30 @@ class Crawler:
         feedList = random.sample(feed, min(len(feed),feedSampleSize))
         
         # Inicializa variáveis de retorno
-        globalResponseCode = 3
-        extraInfo = {"SaveResourcesFilter": []}
+        extraInfo = {"mediaerrors": [], "userssucceeded": [], "usersfailed": []}
         
         # Executa coleta
         attributes = ["gender", "age", "race", "smiling", "glass", "pose"]
-        api = API(key = fpp.apikey.API_KEY, secret = fpp.apikey.API_SECRET, srv = fpp.apikey.SERVER)
+        api = API(key = fpp.apikey.API_KEY, secret = fpp.apikey.API_SECRET, srv = fpp.apikey.SERVER, timeout = 5, max_retries = 0, retry_delay = 0)
         for i, media in enumerate(feedList):
             echo.out(u"Collecting media %d." % (i + 1))
             while (True):
                 try:
-                    response = api.detection.detect(url = media["images"]["standard_resolution"]["url"], attribute = attributes)
-                except APIError as error:
-                    # Se o erro não for INTERNAL_ERROR ou SERVER_TOO_BUSY, apenas reporta e prossegue
-                    if ((error.code != 500) and (error.code != 502)):
-                        globalResponseCode = -4
-                        extraInfo["SaveResourcesFilter"].append((media["id"], {"response_code": error.code}))
-                        break
-                    else:
-                        # Caso o número de tentativas não tenha ultrapassado o máximo,
-                        # experimenta aguardar um certo tempo antes da próxima tentativa 
-                        if (retrys < maxNumberOfRetrys):
-                            sleepSeconds = 2 ** sleepSecondsMultiply
-                            echo.out(u"API call error. Trying again in %02d second(s)." % sleepSeconds, "EXCEPTION")
-                            time.sleep(sleepSeconds)
-                            sleepSecondsMultiply += 1
-                            retrys += 1
-                        else:
-                            raise SystemExit("Maximum number of retrys exceeded.")
+                    response = api.detection.detect(url = media["images"]["low_resolution"]["url"], attribute = attributes)
+                except Exception as error: 
+                    # Códigos de erro HTTP: http://www.faceplusplus.com/detection_detect/
+                    if isinstance(error, APIError): message = "%d: %s" % (error.code, json.loads(error.body)["error"])
+                    # socket.error e urllib2.URLError 
+                    else: message = str(error)
+                    extraInfo["mediaerrors"].append((media["id"], {"error": message}))
+                    extraInfo["usersfailed"].append((resourceID, None))
+                    return (None, extraInfo, None)
                 else:
                     retrys = 0
                     sleepSecondsMultiply = 3
                     fppFilePath = os.path.join(fppDataDir, "%s.fpp" % media["id"])
                     with open(fppFilePath, "w") as fppFile: json.dump(response, fppFile)
-                    #extraInfo["SaveResourcesFilter"].append((media["id"], {"status": 2, "response_code": 200}))
                     break
-        
-        return ({#"crawler_name": socket.gethostname(), 
-                "response_code": globalResponseCode}, 
-                extraInfo,
-                None)
+                    
+        extraInfo["userssucceeded"].append((resourceID, None))
+        return (None, extraInfo, None)
