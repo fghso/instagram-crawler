@@ -18,12 +18,17 @@ class Crawler:
     def crawl(self, resourceID, filters):
         echo = common.EchoHandler(self.config)
         echo.out(u"User ID received: %s." % resourceID)
-    
-        # Configura tratamento de exceções
-        maxNumberOfRetrys = 8
-        retrys = 0
-        sleepSecondsMultiply = 3
         
+        # Extrai filtros
+        application = filters[0]["data"]["application"]
+    
+        # Constrói objeto da API com as credenciais de acesso
+        apiServer = application["apiserver"]
+        apiKey = application["apikey"]
+        apiSecret = application["apisecret"]
+        api = API(srv = apiServer, key = apiKey, secret = apiSecret, timeout = 5, max_retries = 0, retry_delay = 0)
+        echo.out(u"App: %s." % str(application["name"]))
+    
         # Configura diretórios base para armazenamento
         fppBaseDir = "../../data/fpp"
         fppDataDir = os.path.join(fppBaseDir, str(resourceID % 1000), str(resourceID))
@@ -36,14 +41,13 @@ class Crawler:
         
         # Determina mídias a serem coletadas
         feedSampleSize = 10
-        feedList = random.sample(feed, min(len(feed),feedSampleSize))
+        feedList = random.sample(feed, min(len(feed), feedSampleSize))
         
         # Inicializa variáveis de retorno
-        extraInfo = {"mediaerrors": [], "userssucceeded": [], "usersfailed": []}
+        extraInfo = {"mediaerrors": [], "usersok": [], "usersproblem": []}
         
         # Executa coleta
         attributes = ["gender", "age", "race", "smiling", "glass", "pose"]
-        api = API(key = fpp.apikey.API_KEY, secret = fpp.apikey.API_SECRET, srv = fpp.apikey.SERVER, timeout = 5, max_retries = 0, retry_delay = 0)
         for i, media in enumerate(feedList):
             echo.out(u"Collecting media %d." % (i + 1))
             while (True):
@@ -55,14 +59,12 @@ class Crawler:
                     # socket.error e urllib2.URLError 
                     else: message = str(error)
                     extraInfo["mediaerrors"].append((media["id"], {"error": message}))
-                    extraInfo["usersfailed"].append((resourceID, None))
+                    extraInfo["usersproblem"].append((resourceID, None))
                     return (None, extraInfo, None)
                 else:
-                    retrys = 0
-                    sleepSecondsMultiply = 3
                     fppFilePath = os.path.join(fppDataDir, "%s.fpp" % media["id"])
                     with open(fppFilePath, "w") as fppFile: json.dump(response, fppFile)
                     break
                     
-        extraInfo["userssucceeded"].append((resourceID, None))
+        extraInfo["usersok"].append((resourceID, None))
         return (None, extraInfo, None)

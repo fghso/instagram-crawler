@@ -27,8 +27,7 @@ class Crawler:
         echo.out(u"User ID received: %s." % resourceID)
         
         # Extrai filtros
-        for f in filters: 
-            if (f["name"] == "InstagramAppFilter"): application = f["data"]["application"]
+        application = filters[0]["data"]["application"]
     
         # Constrói objeto da API com as credenciais de acesso
         clientID = application["clientid"]
@@ -53,7 +52,8 @@ class Crawler:
         
         # Inicializa variáveis de retorno
         responseCode = 3
-        extraInfo = {"InstagramAppFilter": {}, "SaveResourcesFilter": []}
+        #extraInfo = {"InstagramAppFilter": {}, "SaveResourcesFilter": []}
+        extraInfo = {"InstagramAppFilter": {}}
         
         # Executa coleta
         feedList = []
@@ -97,10 +97,10 @@ class Crawler:
                         feedList.extend(userRecentMedia) 
                         
                         # Extrai dados das mídias para enviar de volta ao SaveResourcesFilter
-                        for media in userRecentMedia:
-                            mediaInfo = {"type": media["type"], 
-                                         "url": media["images"]["standard_resolution"]["url"]}
-                            extraInfo["SaveResourcesFilter"].append((media["id"], mediaInfo))
+                        # for media in userRecentMedia:
+                            # mediaInfo = {"type": media["type"], 
+                                         # "url": media["images"]["standard_resolution"]["url"]}
+                            # extraInfo["SaveResourcesFilter"].append((media["id"], mediaInfo))
                         
                     break
         

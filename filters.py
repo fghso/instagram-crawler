@@ -9,6 +9,7 @@ import json
 import csv
 import xmltodict
 import random
+import Queue
 import common
 import persistence
 
@@ -63,6 +64,60 @@ class SaveResourcesFilter(BaseFilter):
     def shutdown(self): self.persist.shutdown()
     
     
+class FppAppFilter(BaseFilter):
+    def __init__(self, configurationsDictionary): 
+        BaseFilter.__init__(self, configurationsDictionary)
+        self.applicationQueue = Queue.Queue()
+        self.applicationsNames = []
+        self._loadAppFile()
+
+    def _extractConfig(self, configurationsDictionary):
+        BaseFilter._extractConfig(self, configurationsDictionary)
+        self.config["appsfile"] = self.config["appsfile"].encode("utf-8")
+        self.config["dynamicallyload"] = common.str2bool(self.config["dynamicallyload"])
+        self.config["maxapprequests"] = int(self.config["maxapprequests"])
+        if (self.config["maxapprequests"] < 1): raise ValueError("Parameter maxapprequests must be greater than 1.")
+        
+    def _loadAppFile(self):
+        # Open file
+        if os.path.exists(os.path.join(sys.path[0], self.config["appsfile"])): 
+            appsFile = open(os.path.join(sys.path[0], self.config["appsfile"]), "r")
+        else: 
+            appsFile = open(os.path.join(sys.path[1], self.config["appsfile"]), "r")
+            
+        # Load content
+        fileType = os.path.splitext(self.config["appsfile"])[1][1:].lower()
+        if (fileType == "csv"):
+            reader = csv.DictReader(appsFile, quoting = csv.QUOTE_NONE)
+            applicationsList = list(reader) * self.config["maxapprequests"]
+        else: raise TypeError("Unknown file type '%s'." % self.selectConfig["filename"])
+        
+        # Put applications in the list
+        for app in applicationsList:
+            server = app["apiserver"].lower()
+            if (server == "us"): app["apiserver"] = "http://api.us.faceplusplus.com/"
+            elif (server == "cn"): app["apiserver"] = "http://api.cn.faceplusplus.com/"
+            if (app["name"] in self.applicationsNames): 
+                self.applicationsNames.remove(app["name"])
+            else:
+                self.applicationsNames.append(app["name"])
+                self.applicationQueue.put(app)
+        
+        # Close file
+        appsFile.close()
+        
+    def apply(self, resourceID, resourceInfo, extraInfo):
+        if (self.config["dynamicallyload"]): self._loadAppFile()
+        
+        while True:
+            application = self.applicationQueue.get()
+            if (application["name"] in self.applicationsNames): 
+                self.applicationQueue.put(application)
+                break
+        
+        return {"application": application}
+
+        
 class InstagramAppFilter(BaseFilter):
     def __init__(self, configurationsDictionary): 
         BaseFilter.__init__(self, configurationsDictionary)

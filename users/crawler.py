@@ -25,8 +25,6 @@ class Crawler:
         echo.out(u"User ID received: %s." % resourceID)
         
         # Extrai filtros
-        # for f in filters: 
-            # if (f["name"] == "InstagramAppFilter"): application = f["data"]["application"]
         application = filters[0]["data"]["application"]
             
         # Constrói objeto da API com as credenciais de acesso
@@ -41,7 +39,8 @@ class Crawler:
         sleepSecondsMultiply = 3
         
         # Configura diretório base para armazenamento
-        usersDataDir = "../../data/users"
+        usersBaseDir = "../../data/users"
+        usersDataDir = os.path.join(usersBaseDir, str(resourceID % 1000))
         if not os.path.exists(usersDataDir): os.makedirs(usersDataDir)
         
         # Inicializa variáveis de retorno

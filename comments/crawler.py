@@ -24,8 +24,6 @@ class Crawler:
         echo.out(u"User ID received: %s." % resourceID)
         
         # Extrai filtros
-        # for f in filters: 
-            # if (f["name"] == "InstagramAppFilter"): application = f["data"]["application"]
         application = filters[0]["data"]["application"]
     
         # Constrói objeto da API com as credenciais de acesso
