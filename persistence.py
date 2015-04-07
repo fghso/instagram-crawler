@@ -1,5 +1,11 @@
 # -*- coding: iso-8859-1 -*-
 
+"""Module to store persistence handler classes.
+
+Persistence handlers take care of all implementation details related to resource storage. They expose a common interface (defined in :class:`BasePersistenceHandler`) through which the server (and/or filters/crawlers) can load, save and perform other operations over resources independently from where and how the resources are actually stored. At any point in time, the collection status of each resource must be one of those defined in the struct-like class :class:`StatusCodes`.
+
+"""
+
 import os
 import threading
 import tempfile
@@ -16,6 +22,11 @@ from collections import deque
 
 
 class StatusCodes():
+    """A struct-like class to hold constants for resources status codes.
+    
+    The numeric value of each code can be modified to match the one used in the final location where the resources are persisted. The name of each code (``SUCCEEDED``, ``INPROGRESS``, ``AVAILABLE``, ``FAILED``, ``ERROR``) must not be modified.
+    
+    """
     SUCCEEDED  =  2
     INPROGRESS =  1
     AVAILABLE  =  0 
@@ -23,26 +34,112 @@ class StatusCodes():
     ERROR      = -2
 
 
-class BasePersistenceHandler():  
-    def __init__(self, configurationsDictionary): # Receives a copy of everything in the handler section of the XML configuration file as the parameter configurationsDictionary
-        self.config = configurationsDictionary
+class BasePersistenceHandler(): 
+    """Abstract class. All persistence handlers should inherit from it or from other class that inherits."""
+ 
+    def __init__(self, configurationsDictionary): 
+        """Constructor.  
+        
+        Each persistence handler receives everything in its corresponding handler section of the XML configuration file as the parameter *configurationsDictionary*. 
+        
+        """
+        self._extractConfig(configurationsDictionary)
         self.status = StatusCodes() 
-    def setup(self): pass # Called when a connection to a client is opened
-    def select(self): return (None, None, None) # Returns a tuple: (resource unique key, resource id, resource info dictionary)
-    def update(self, resourceKey, status, resourceInfo): pass
-    def insert(self, resourcesList): pass # Receives a list of tuples: [(resource id, resource info dictionary), ...]
-    def count(self): return (0, 0, 0, 0, 0, 0) # Returns a tuple: (total, succeeded, inprogress, available, failed, error)
-    def reset(self, status): return 0 # Returns the number of resources reseted
-    def finish(self): pass # Called when a connection to a client is finished
-    def shutdown(self): pass # Called when server is shut down, allowing to free shared resources
+        
+    def _extractConfig(self, configurationsDictionary):
+        """Extract and store configurations.
+        
+        If some configuration needs any kind of pre-processing, it is done here. Extend this method if you need to pre-process custom configuration options.
+        
+        """
+        self.config = configurationsDictionary
+        if ("echo" not in self.config): self.config["echo"] = {}
+        
+    def setup(self):
+        """Execute per client initialization procedures.
+        
+        This method is called every time a connection to a new client is opened, allowing to execute initialization code on a per client basis (which differs from :meth:`__init__` that is called when the server instantiate the persistence handler, i.e., :meth:`__init__` is called just one time for the whole period of execution of the program).
+        
+        """
+        pass
+    
+    def select(self): 
+        """Retrive an ``AVAILABLE`` resource.
+        
+        Returns: 
+            A tuple in the format (*resourceKey*, *resourceID*, *resourceInfo*).
+        
+            * *resourceKey* (user defined type): Value that uniquely identify the resource internally. It works like a primary key in relational databases and makes possible the existence of resources with the same ID, if needed.
+            * *resourceID* (user defined type): Resource ID to be sent to a client.
+            * *resourceInfo* (dict): Other information related to the resource, if there is any.
+        
+        """
+        return (None, None, None)
+    
+    def update(self, resourceKey, status, resourceInfo): 
+        """Update the specified resource, setting its status and information data to the ones given.
+        
+        Args: 
+            * *resourceKey* (user defined type): Value that uniquely identify the resource internally.
+            * *status* (:class:`StatusCodes`): New status of the resource.
+            * *resourceInfo* (dict): Other information related to the resource, if there is any.
+            
+        """
+        pass
+    
+    def insert(self, resourcesList): 
+        """Insert new resources into the final location where resources are persisted.
+        
+        Args: 
+            * *resourcesList* (list): List of tuples containing all new resources to be inserted. Each resource is defined by a tuple in the format (*resourceID*, *resourceInfo*).
+            
+        """
+        pass
+    
+    def count(self): 
+        """Count the number of resources in each status category.
+        
+        Returns: 
+            A tuple in the format (*total*, *succeeded*, *inprogress*, *available*, *failed*, *error*) where all fields are integers representing the number of resources with the respective status code.
+            
+        """
+        return (0, 0, 0, 0, 0, 0)
+    
+    def reset(self, status): 
+        """Change to ``AVAILABLE`` all resources with the status code given.
+        
+        Args:
+            * *status* (:class:`StatusCodes`): Status of the resources to be reseted.
+        
+        Returns:
+            Number of resources reseted.
+        
+        """
+        return 0
+    
+    def finish(self): 
+        """Execute per client finalization procedures.
+        
+        This method is called every time a connection to a client is closed, allowing to execute finalization code on a per client basis. It is the counterpart of :meth:`setup`.
+        
+        """
+        pass
+    
+    def shutdown(self): 
+        """Execute program finalization procedures (similar to a destructor).
+        
+        This method is called when the server is shut down, allowing to execute finalization code in a global manner. It is intended to be the counterpart of :meth:`__init__`, but differs from :meth:`__del__() <python:object.__del__>` in that it is not bounded to the live of the persistence handler object itself, but rather to the span of execution time of the server.
+        
+        """
+        pass
         
         
-# This class was built as basis for FilePersistenceHandler and for test purposes. 
-# It is not intended for direct use in a production enviroment
+# IMPORTANT NOTE: MemoryPersistenceHandler class was built as basis for FilePersistenceHandler and its extensions, 
+# and for test purposes. Altough it can be set in the configuration file, it is not intended for direct use in a 
+# production enviroment. In this case, choose one of the file based handlers instead
 class MemoryPersistenceHandler(BasePersistenceHandler):
     def __init__(self, configurationsDictionary): 
         BasePersistenceHandler.__init__(self, configurationsDictionary)
-        self._extractConfig(configurationsDictionary)
         self.insertLock = threading.Lock()
         self.resources = []
         self.IDsHash = {}
@@ -54,6 +151,8 @@ class MemoryPersistenceHandler(BasePersistenceHandler):
         #self._loadTestData()
             
     def _extractConfig(self, configurationsDictionary):
+        BasePersistenceHandler._extractConfig(self, configurationsDictionary)
+    
         if ("uniqueresourceid" not in self.config): self.config["uniqueresourceid"] = False
         else: self.config["uniqueresourceid"] = common.str2bool(self.config["uniqueresourceid"])
     
@@ -126,23 +225,170 @@ class MemoryPersistenceHandler(BasePersistenceHandler):
             
         
 class FilePersistenceHandler(MemoryPersistenceHandler):
-    class GenericFileTypeColumns():
+    """Load and dump resources from/to a file.
+    
+    All resources in the file are loaded into memory before the server operations begin. So, this handler is recomended for small to medium size datasets that can be completely fitted into machine's memory. For larger datasets, consider using another persistence handler. Another option for large datasets is to divide the resources in more than one file, collecting the resources of one file at a time.
+    
+    The default version of this handler supports CSV and JSON files. It is possible to add support to other file types by subclassing :class:`BaseFileColumns` and :class:`BaseFileHandler`. The new file type must also be included in  the :attr:`supportedFileTypes` dictionary.
+    
+    """
+    class BaseFileColumns():
+        """Hold column names of data in the file, allowing fast access to names of ID, status and info columns."""
+        
         def __init__(self, fileName, idColumn, statusColumn):
             self.names = self._extractColNames(fileName)
             self.idName = idColumn
             self.statusName = statusColumn
             self.infoNames = [name for name in self.names if (name not in (self.idName, self.statusName))]
-        # This method must be overriden to extract the column names for the specific file type
-        def _extractColNames(self, fileName): pass 
-
-    class GenericFileTypeHandler():
-        # Resource internal representation format: {"id": X, "status": X, "info": {...}}
-        def parse(self, resource, columns): pass # Transform resource from file format to internal representation format
-        def unparse(self, resource, columns): pass # Transform resource from internal representation format to file format
-        def load(self, file, columns): yield None # Generator that yields resources in the internal representation format 
-        def dump(self, resources, file, columns): pass # Save a list of resources in internal representation format to file
+            
+        def _extractColNames(self, fileName): 
+            """Extract column names from the file.
+            
+            Must be overriden, as column names extraction depends on the file type.
+            
+            Returns: 
+                A list of all column names in the file.
         
-    class JSONColumns(GenericFileTypeColumns):
+            """
+            return [] 
+
+    class BaseFileHandler():
+        """Handle low level details about persistence in a specific file type.
+    
+        Each resource loaded from a file is stored in memory in a dictionary in the format ``{"id": X, "status": X, "info": {...}}``, which is the resource internal representation format. This handler is responsible for translating resources in the internal representation format to the format used in a specific file type and vice-versa.
+        
+        """
+        def __init__(self): self.status = StatusCodes() 
+        
+        def parse(self, resource, columns): 
+            """Transform resource from file format to internal representation format.
+            
+            Args: 
+                * *resource* (file specific type): Resource given in file format.
+                * *columns* (:class:`BaseFileColumns <FilePersistenceHandler.BaseFileColumns>` subclass): Object holding column names.
+            
+            Returns:
+                A resource in internal representation format.
+            
+            """
+            return {"id": None, "status": None, "info": None}
+            
+        def unparse(self, resource, columns): 
+            """Transform resource from internal representation format to file format.
+            
+            Args: 
+                * *resource* (dict): Resource given in internal representation format.
+                * *columns* (:class:`BaseFileColumns <FilePersistenceHandler.BaseFileColumns>` subclass): Object holding column names.
+            
+            Returns:
+                A resource in file format.
+            
+            """
+            return None
+            
+        def load(self, file, columns): 
+            """Load resources in file format and yield them in internal representation format.
+            
+            Args: 
+                * *file* (:ref:`file object<python:bltin-file-objects>`): File object bounded to the physical file where resources are stored.
+                * *columns* (:class:`BaseFileColumns <FilePersistenceHandler.BaseFileColumns>` subclass): Object holding column names.
+                
+            Yields:
+                A resource in internal representation format.
+            
+            """
+            yield {"id": None, "status": None, "info": None} 
+            
+        def dump(self, resources, file, columns):
+            """Save resources in internal representation format to file format.
+            
+            Args: 
+                * *resources* (list): List of resources in internal representation format.
+                * *file* (:ref:`file object<python:bltin-file-objects>`): File object bounded to the physical file where resources will be stored.
+                * *columns* (:class:`BaseFileColumns <FilePersistenceHandler.BaseFileColumns>` subclass): Object holding column names.
+
+            """        
+            pass
+            
+    class CSVColumns(BaseFileColumns):
+        """Hold column names of data in CSV files, allowing fast access to names of ID, status and info columns."""
+    
+        def _extractColNames(self, fileName):
+            with open(fileName, "r") as file: 
+                reader = csv.DictReader(file, quoting = csv.QUOTE_MINIMAL, quotechar = "'", skipinitialspace = True)
+                columns = reader.fieldnames
+            return [col.strip("\"") for col in columns]
+    
+    class CSVHandler(BaseFileHandler):
+        """Handle low level details about persistence in CSV files.
+        
+        .. note::
+            
+            This class and :class:`CSVColumns <FilePersistenceHandler.CSVColumns>` class uses Python's built-in :mod:`python:csv` module internally. 
+        
+        """
+        def _parseValue(self, value):
+            if (not value): return None
+            if (not value.startswith("\"")):
+                if value.upper() in ("TRUE", "T"): return True
+                if value.upper() in ("FALSE", "F"): return False       
+                if value.upper() in ("NONE", "NULL"): return None
+                if ("." in value): return float(value)
+                return int(value)
+            return value.strip("\"") 
+        
+        def _unparseValue(self, value):
+            if isinstance(value, basestring): 
+                if isinstance(value, unicode): value = value.encode("utf-8")
+                return "".join(("\"", value, "\""))
+            if isinstance(value, bool): return ("T" if (value) else "F")
+            return value
+            
+        def parse(self, resource, columns):
+            parsed = {"id": self._parseValue(resource[columns.idName])}
+            if ((columns.statusName in columns.names) and (resource[columns.statusName])): 
+                parsed["status"] = self._parseValue(resource[columns.statusName])
+            else: parsed["status"] = self.status.AVAILABLE
+            if (columns.infoNames):
+                parsed["info"] = {}
+                for column in columns.infoNames:
+                    parsed["info"][column] = self._parseValue(resource[column])
+            return parsed
+        
+        def unparse(self, resource, columns):
+            buffer = cStringIO.StringIO()
+            writer = csv.DictWriter(buffer, columns.names, quoting = csv.QUOTE_MINIMAL, quotechar = "'", lineterminator = "\n", extrasaction = "ignore")
+            unparsed = {columns.idName: self._unparseValue(resource["id"])}
+            if (resource["status"] != self.status.AVAILABLE): 
+                unparsed[columns.statusName] = self._unparseValue(resource["status"])
+            if (resource["info"]):
+                for key, value in resource["info"].iteritems():
+                    if (value is not None) and (key in columns.infoNames): unparsed[key] = self._unparseValue(value)
+            writer.writerow(unparsed)
+            return buffer.getvalue()
+            
+        def load(self, file, columns):
+            reader = csv.DictReader(file, columns.names, quoting = csv.QUOTE_MINIMAL, quotechar = "'", skipinitialspace = True)
+            next(reader)
+            for resource in reader:
+                yield self.parse(resource, columns)
+        
+        def dump(self, resources, file, columns):
+            writer = csv.DictWriter(file, columns.names, quoting = csv.QUOTE_MINIMAL, quotechar = "'", lineterminator = "\n", extrasaction = "ignore")
+            writer.writeheader()
+            # In case of CSV, it is easier and faster to unparse the resource here instead of using 
+            # unparse method, so we can use writerow method to directly save the resource to file
+            for resource in resources:
+                row = {columns.idName: self._unparseValue(resource["id"])}
+                if (resource["status"] != 0): row[columns.statusName] = self._unparseValue(resource["status"])
+                if (resource["info"]):
+                    for key, value in resource["info"].iteritems():
+                        if (value is not None) and (key in columns.infoNames): row[key] = self._unparseValue(value)
+                writer.writerow(row)
+        
+    class JSONColumns(BaseFileColumns):
+        """Hold column names of data in JSON files, allowing fast access to names of ID, status and info columns."""
+    
         def _extractColNames(self, fileName):
             with open(fileName, "r") as file: content = file.read(1024)
             columnsStart = content.index("[") + 1
@@ -150,12 +396,19 @@ class FilePersistenceHandler(MemoryPersistenceHandler):
             columns = content[columnsStart:columnsEnd]
             return [name.strip("\" ") for name in columns.split(",")]
        
-    class JSONHandler(GenericFileTypeHandler):    
+    class JSONHandler(BaseFileHandler):    
+        """Handle low level details about persistence in JSON files.
+        
+        .. note::
+            
+            This class and :class:`JSONColumns <FilePersistenceHandler.JSONColumns>` uses Python's built-in :mod:`python:json` module internally. 
+        
+        """
         def parse(self, resource, columns):
             parsed = {"id": resource[columns.idName]}
             if ((columns.statusName in columns.names) and (columns.statusName in resource)): 
                 parsed["status"] = resource[columns.statusName]
-            else: parsed["status"] = 0
+            else: parsed["status"] = self.status.AVAILABLE
             if (columns.infoNames):
                 parsed["info"] = {}
                 for column in columns.infoNames:
@@ -165,7 +418,7 @@ class FilePersistenceHandler(MemoryPersistenceHandler):
         
         def unparse(self, resource, columns):
             unparsed = {columns.idName: resource["id"]}
-            if (resource["status"] != 0): unparsed[columns.statusName] = resource["status"]
+            if (resource["status"] != self.status.AVAILABLE): unparsed[columns.statusName] = resource["status"]
             if (resource["info"]): 
                 for key, value in resource["info"].iteritems(): 
                     if (value is not None) and (key in columns.infoNames): unparsed[key] = value
@@ -184,72 +437,16 @@ class FilePersistenceHandler(MemoryPersistenceHandler):
                 separator = ", "
             file.write("]}")
             
-    class CSVColumns(GenericFileTypeColumns):
-        def _extractColNames(self, fileName):
-            with open(fileName, "r") as file: 
-                reader = csv.DictReader(file, quoting = csv.QUOTE_NONE, skipinitialspace = True)
-                columns = reader.fieldnames
-            return columns
-    
-    class CSVHandler(GenericFileTypeHandler):
-        def _parseValue(self, value):
-            if (not value): return None
-            if (not value.startswith("\"")):
-                if value.lower() in ("true", "t"): return True
-                if value.lower() in ("false", "f"): return False       
-                if value.lower() in ("none", "null"): return None
-                if ("." in value): return float(value)
-                return int(value)
-            return value.strip("\"") 
-        
-        def _unparseValue(self, value):
-            if isinstance(value, basestring): return "".join(("\"", value, "\""))
-            if isinstance(value, bool): return ("T" if (value) else "F")
-            return value
-            
-        def parse(self, resource, columns):
-            parsed = {"id": self._parseValue(resource[columns.idName])}
-            if ((columns.statusName in columns.names) and (resource[columns.statusName])): 
-                parsed["status"] = self._parseValue(resource[columns.statusName])
-            else: parsed["status"] = 0
-            if (columns.infoNames):
-                parsed["info"] = {}
-                for column in columns.infoNames:
-                    parsed["info"][column] = self._parseValue(resource[column])
-            return parsed
-        
-        def unparse(self, resource, columns):
-            buffer = cStringIO.StringIO()
-            writer = csv.DictWriter(buffer, columns.names, quoting = csv.QUOTE_NONE, escapechar = "", quotechar = "", lineterminator = "\n", extrasaction = "ignore")
-            unparsed = {columns.idName: self._unparseValue(resource["id"])}
-            if (resource["status"] != 0): unparsed[columns.statusName] = self._unparseValue(resource["status"])
-            if (resource["info"]):
-                for key, value in resource["info"].iteritems():
-                    if (value is not None) and (key in columns.infoNames): unparsed[key] = self._unparseValue(value)
-            writer.writerow(unparsed)
-            return buffer.getvalue()
-            
-        def load(self, file, columns):
-            reader = csv.DictReader(file, quoting = csv.QUOTE_NONE, skipinitialspace = True)
-            for resource in reader:
-                yield self.parse(resource, columns)
-        
-        def dump(self, resources, file, columns):
-            writer = csv.DictWriter(file, columns.names, quoting = csv.QUOTE_NONE, escapechar = "", quotechar = "", lineterminator = "\n", extrasaction = "ignore")
-            writer.writeheader()
-            # In case of CSV, it is easier and faster to unparse the resource here, 
-            # so we can use writerow method to directly save the resource to file
-            for resource in resources:
-                row = {columns.idName: self._unparseValue(resource["id"])}
-                if (resource["status"] != 0): row[columns.statusName] = self._unparseValue(resource["status"])
-                if (resource["info"]):
-                    for key, value in resource["info"].iteritems():
-                        if (value is not None) and (key in columns.infoNames): row[key] = self._unparseValue(value)
-                writer.writerow(row)
-
+    supportedFileTypes = {
+                         # Type   : [FileColumns, FileHandler]
+                           "CSV"  : ["CSVColumns", "CSVHandler"],
+                           "JSON" : ["JSONColumns", "JSONHandler"]
+                         }
+    """Associate file types and its columns and handler classes. The type of the current file is provided by the user directly (through the ``filetype`` option in the XML configuration file) or indirectly (through the file extension extracted from file name). When checking if the type of the current file is on the list of supported file types, the comparison between the strings is case insensitive."""
+                         
     def __init__(self, configurationsDictionary): 
         MemoryPersistenceHandler.__init__(self, configurationsDictionary)
-        self.echo = common.EchoHandler()
+        self.echo = common.EchoHandler(self.config["echo"])
         self.saveLock = threading.Lock()
         self.dumpExceptionEvent = threading.Event()
         self.timer = threading.Timer(self.config["savetimedelta"], self.timelyDump)
@@ -281,16 +478,15 @@ class FilePersistenceHandler(MemoryPersistenceHandler):
     def _save(self, pk, id, status, info, changeInfo = True):
         with self.saveLock: MemoryPersistenceHandler._save(self, pk, id, status, info, changeInfo)
     
-    # Define internal file handler based on file type. Change this function to add support to other file types
     def _setFileHandler(self):
-        if (self.config["filetype"] == "json"): 
-            self.fileColumns = self.JSONColumns(self.config["filename"], self.config["resourceidcolumn"], self.config["statuscolumn"])
-            self.fileHandler = self.JSONHandler()
-        elif (self.config["filetype"] == "csv"): 
-            self.fileColumns = self.CSVColumns(self.config["filename"], self.config["resourceidcolumn"], self.config["statuscolumn"])
-            self.fileHandler = self.CSVHandler()
-        else: 
-            raise TypeError("Unknown file type '%s'." % self.config["filetype"])
+        for type, handler in FilePersistenceHandler.supportedFileTypes.iteritems():
+            if (self.config["filetype"] == type.lower()): 
+                FileColumnsClass = getattr(self, handler[0])
+                FileHandlerClass = getattr(self, handler[1])
+                self.fileColumns = FileColumnsClass(self.config["filename"], self.config["resourceidcolumn"], self.config["statuscolumn"])
+                self.fileHandler = FileHandlerClass()
+                return            
+        raise TypeError("Unknown file type '%s' for file '%s'." % (self.config["filetype"], self.config["filename"]))
             
     def _checkDumpException(function):
         def decoratedFunction(self, *args):
@@ -310,7 +506,7 @@ class FilePersistenceHandler(MemoryPersistenceHandler):
     def timelyDump(self):
         try: 
             self.dump()
-        except Except as error:
+        except Exception as error:
             self.dumpExceptionEvent.set()
             raise
         self.timer = threading.Timer(self.config["savetimedelta"], self.timelyDump)
@@ -343,10 +539,23 @@ class FilePersistenceHandler(MemoryPersistenceHandler):
         
         
 class RolloverFilePersistenceHandler(FilePersistenceHandler):
+    """Load and dump resources from/to files respecting limits of file size and/or number of resources per file.
+    
+    This handler uses multiple instances of :class:`FilePersistenceHandler` to allow insertion of new resources respecting limits specified by the user. It is also capable of reading and updating resources from multiple files.
+    
+    The rollover handler leaves the low level details of persistence for the file handlers attached to each file, taking care of the coordination necessary to maintain consistency between them and also of the verification of limits established. 
+    
+    When inserting new resources, every time the file size limit and/or number of resources per file limit is reached rollover handler opens a new file and assigns a new instance of :class:`FilePersistenceHandler` to handle it. All resources, however, are maintained in memory. So, as in the case of :class:`FilePersistenceHandler`, this handler is not well suited for large datasets that cannot be completely fitted in memory.
+    
+    .. note::
+    
+        This handler was inspired by Python's :class:`python:logging.handlers.RotatingFileHandler` class.
+    
+    """
     def __init__(self, configurationsDictionary): 
         self.originalConfig = deepcopy(configurationsDictionary)
         MemoryPersistenceHandler.__init__(self, configurationsDictionary)
-        self.echo = common.EchoHandler()
+        self.echo = common.EchoHandler(self.config["echo"])
         self._setFileHandler()
         self.fileHandlersList = []
         self.nextSuffixNumber = 1
@@ -416,7 +625,7 @@ class RolloverFilePersistenceHandler(FilePersistenceHandler):
             with self.insertLock:
                 handler = self.fileHandlersList[self.insertHandlerIndex]
       
-                # If size or amount thresholds were exceeded, change insert handler. If there is no more
+                # Change insert handler if size or amount thresholds were exceeded. If there is no more
                 # handlers in the list, open a new file and instantiate a new handler to take care of it
                 while ((self.insertSize >= self.config["sizethreshold"]) or 
                        (self.insertAmount >= self.config["amountthreshold"])):
@@ -452,9 +661,17 @@ class RolloverFilePersistenceHandler(FilePersistenceHandler):
         
         
 class MySQLPersistenceHandler(BasePersistenceHandler):
+    """Store and retrieve resources to/from a MySQL database. 
+    
+    The table must already exist in the database and must contain at least three columns: a primary key column, a resource ID column and a status column.
+    
+    .. note::
+    
+        This handler uses `MySQL Connector/Python <http://dev.mysql.com/doc/connector-python/en/index.html>`_ to interact with MySQL databases. 
+    
+    """
     def __init__(self, configurationsDictionary):
         BasePersistenceHandler.__init__(self, configurationsDictionary)
-        self._extractConfig(configurationsDictionary)
         self.local = threading.local()
         
         # Get column names
@@ -470,11 +687,12 @@ class MySQLPersistenceHandler(BasePersistenceHandler):
         connection.close()
         
     def _extractConfig(self, configurationsDictionary):
+        BasePersistenceHandler._extractConfig(self, configurationsDictionary)   
         if ("onduplicateupdate" not in self.config): self.config["onduplicateupdate"] = False
         else: self.config["onduplicateupdate"] = common.str2bool(self.config["onduplicateupdate"])
         
     def setup(self):
-        self.local.connection = mysql.connector.connect(user=self.config["user"], password=self.config["password"], host=self.config["host"], database=self.config["name"])
+        self.local.connection = mysql.connector.connect(user=self.config["user"], password=self.config["password"], host=self.config["host"], database=self.config["database"])
         self.local.lastSelectID = None
         
     def select(self):

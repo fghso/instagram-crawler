@@ -53,14 +53,15 @@ coverage.xml
 docs/_build/
 
 # Custom
-/FacePlusPlus/fpp
+/faceplusplus/fpp
+/ids
+*/log
 *.log
 *.out
 *.xml
 *.json
 *.csv
 *.txt
-config.py
 
 
 # =========================
