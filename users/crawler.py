@@ -57,7 +57,7 @@ class BaseCrawler:
 
         
 class UsersCrawler(BaseCrawler):
-    # Return values:
+    # Response codes:
     #    3 => Successful collection
     #   -4 => APINotAllowedError - you cannot view this resource
     #   -5 => APINotFoundError - this user does not exist

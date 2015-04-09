@@ -122,16 +122,15 @@ class ResourceInfoFilter(BaseFilter):
 class FppAppFilter(BaseFilter):
     def __init__(self, configurationsDictionary): 
         BaseFilter.__init__(self, configurationsDictionary)
-        self.applicationQueue = Queue.Queue()
-        self.applicationsNames = []
+        self.applicationsQueue = Queue.Queue()
+        self.local = threading.local()
         self._loadAppFile()
 
     def _extractConfig(self, configurationsDictionary):
         BaseFilter._extractConfig(self, configurationsDictionary)
         self.config["appsfile"] = self.config["appsfile"].encode("utf-8")
-        self.config["dynamicallyload"] = common.str2bool(self.config["dynamicallyload"])
         self.config["maxapprequests"] = int(self.config["maxapprequests"])
-        if (self.config["maxapprequests"] < 1): raise ValueError("Parameter maxapprequests must be greater than 1.")
+        if (self.config["maxapprequests"] < 0): raise ValueError("Parameter maxapprequests must be greater than or equal to zero. Zero means no boundary on the number of requests.")
         
     def _loadAppFile(self):
         # Open file
@@ -144,34 +143,28 @@ class FppAppFilter(BaseFilter):
         fileType = os.path.splitext(self.config["appsfile"])[1][1:].lower()
         if (fileType == "csv"):
             reader = csv.DictReader(appsFile, quoting = csv.QUOTE_NONE)
-            applicationsList = list(reader) * self.config["maxapprequests"]
+            if (self.config["maxapprequests"] < 2): applicationsList = list(reader)
+            else: applicationsList = list(reader) * self.config["maxapprequests"]
         else: raise TypeError("Unknown file type '%s'." % self.selectConfig["filename"])
         
-        # Put applications in the list
+        # Put applications on the queue
         for app in applicationsList:
             server = app["apiserver"].lower()
             if (server == "us"): app["apiserver"] = "http://api.us.faceplusplus.com/"
             elif (server == "cn"): app["apiserver"] = "http://api.cn.faceplusplus.com/"
-            if (app["name"] in self.applicationsNames): 
-                self.applicationsNames.remove(app["name"])
-            else:
-                self.applicationsNames.append(app["name"])
-                self.applicationQueue.put(app)
+            self.applicationsQueue.put(app)
         
         # Close file
         appsFile.close()
         
     def apply(self, resourceID, resourceInfo, extraInfo):
-        if (self.config["dynamicallyload"]): self._loadAppFile()
+        self.local.application = self.applicationsQueue.get()
+        if (self.config["maxapprequests"] == 0): self.applicationsQueue.put(self.local.application)
+        return {"application": self.local.application}
         
-        while True:
-            application = self.applicationQueue.get()
-            if (application["name"] in self.applicationsNames): 
-                self.applicationQueue.put(application)
-                break
+    def callback(self, resourceID, resourceInfo, newResources, extraInfo):
+        if (self.config["maxapprequests"] > 0): self.applicationsQueue.put(self.local.application)
         
-        return {"application": application}
-
         
 class InstagramAppFilter(BaseFilter):
     def __init__(self, configurationsDictionary): 
@@ -186,7 +179,7 @@ class InstagramAppFilter(BaseFilter):
     def _extractConfig(self, configurationsDictionary):
         BaseFilter._extractConfig(self, configurationsDictionary)
         self.config["appsfile"] = self.config["appsfile"].encode("utf-8")
-        self.config["dynamicallyload"] = common.str2bool(self.config["dynamicallyload"])
+        #self.config["dynamicallyload"] = common.str2bool(self.config["dynamicallyload"])
         self.config["resetpercent"] = float(self.config["resetpercent"]) / 100
         self.config["sleeptimedelta"] = int(self.config["sleeptimedelta"])
         if (self.config["sleeptimedelta"] < 1): raise ValueError("Parameter sleeptimedelta must be greater than 1 second.")
@@ -194,7 +187,7 @@ class InstagramAppFilter(BaseFilter):
     def setup(self): self.local.lastAppName = None
         
     def apply(self, resourceID, resourceInfo, extraInfo):
-        if (self.config["dynamicallyload"]): self._loadAppFile()
+        #if (self.config["dynamicallyload"]): self._loadAppFile()
         
         if (self.config["method"] == "random"): 
             appIndex = random.randint(0, len(self.applicationList) - 1)
@@ -225,6 +218,7 @@ class InstagramAppFilter(BaseFilter):
                         self.echo.out(u"Ratelimit of all applications exceeded, sleeping now for %d seconds..." % self.config["sleeptimedelta"], "WARNING")
                         time.sleep(self.config["sleeptimedelta"])
                     else: break
+                    
         return {"application": self.applicationList[appIndex]}
         
     def callback(self, resourceID, resourceInfo, newResources, extraInfo):
@@ -278,7 +272,7 @@ class InstagramAppFilter(BaseFilter):
                 self.echo.out(message, "ERROR")
         return rateRemaining  
                 
-    # Methods for test
+    # Methods for tests
     def _spendRandomRate(self, repeat):
         httpObj = httplib2.Http(disable_ssl_certificate_validation=True)
         for i in range(1, repeat + 1):
@@ -302,8 +296,8 @@ if __name__ == "__main__":
     #print InstagramAppFilter()._spendSpecificRate("CampsApp1", 1)
     print InstagramAppFilter({"name": None, 
                               "appsfile": "apps.csv", 
-                              "dynamicallyload": "False",
-                              "method": "maxpost",
+                              #"dynamicallyload": "False",
+                              "method": "maxpost", # random, maxpost or maxpre
                               "resetpercent": 50,
                               "sleeptimedelta": 60}).apply(None, None, None)
                               
