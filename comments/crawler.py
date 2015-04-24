@@ -26,6 +26,7 @@ class BaseCrawler:
         
         """
         self._extractConfig(configurationsDictionary)
+        self.echo = common.EchoHandler(self.config["echo"])
        
     def _extractConfig(self, configurationsDictionary):
         """Extract and store configurations.
@@ -61,8 +62,7 @@ class CommentsCrawler(BaseCrawler):
     #    3 => Successful collection
     #   -4 => Error in one of the media
     def crawl(self, resourceID, filters):      
-        echo = common.EchoHandler(self.config)
-        echo.out(u"User ID received: %s." % resourceID)
+        self.echo.out(u"User ID received: %s." % resourceID)
         
         # Extract filters
         application = filters[0]["data"]["application"]
@@ -71,7 +71,7 @@ class CommentsCrawler(BaseCrawler):
         clientID = application["clientid"]
         clientSecret = application["clientsecret"]
         api = InstagramAPI(client_id = clientID, client_secret = clientSecret)
-        echo.out(u"App: %s." % str(application["name"]))
+        self.echo.out(u"App: %s." % str(application["name"]))
 
         # Configure exception handling
         maxNumberOfRetrys = 8
@@ -95,19 +95,19 @@ class CommentsCrawler(BaseCrawler):
         # Execute collection
         comments = []
         for media in feed:
-            echo.out(u"Media: %s." % media["id"])
+            self.echo.out(u"Media: %s." % media["id"])
             while (True):
                 try:
                     mediaComments = api.media_comments(media_id=media["id"], return_json=True)
                 except (InstagramAPIError, InstagramClientError) as error:
                     if (error.status_code == 400):
-                        echo.out(error, "ERROR")
+                        self.echo.out(error, "ERROR")
                         responseCode = -4
                         break
                     else:
                         if (retrys < maxNumberOfRetrys):
                             sleepSeconds = 2 ** sleepSecondsMultiply
-                            echo.out(u"API call error. Trying again in %02d second(s)." % sleepSeconds, "EXCEPTION")
+                            self.echo.out(u"API call error. Trying again in %02d second(s)." % sleepSeconds, "EXCEPTION")
                             time.sleep(sleepSeconds)
                             sleepSecondsMultiply += 1
                             retrys += 1

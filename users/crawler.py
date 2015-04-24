@@ -26,6 +26,7 @@ class BaseCrawler:
         
         """
         self._extractConfig(configurationsDictionary)
+        self.echo = common.EchoHandler(self.config["echo"])
        
     def _extractConfig(self, configurationsDictionary):
         """Extract and store configurations.
@@ -62,8 +63,7 @@ class UsersCrawler(BaseCrawler):
     #   -4 => APINotAllowedError - you cannot view this resource
     #   -5 => APINotFoundError - this user does not exist
     def crawl(self, resourceID, filters):
-        echo = common.EchoHandler(self.config)
-        echo.out(u"User ID received: %s." % resourceID)
+        self.echo.out(u"User ID received: %s." % resourceID)
         
         # Extract filters
         application = filters[0]["data"]["application"]
@@ -72,7 +72,7 @@ class UsersCrawler(BaseCrawler):
         clientID = application["clientid"]
         clientSecret = application["clientsecret"]
         api = InstagramAPI(client_id = clientID, client_secret = clientSecret)
-        echo.out(u"App: %s." % str(application["name"]))
+        self.echo.out(u"App: %s." % str(application["name"]))
 
         # Configure exception handling
         maxNumberOfRetrys = 8
@@ -104,7 +104,7 @@ class UsersCrawler(BaseCrawler):
                 else:
                     if (retrys < maxNumberOfRetrys):
                         sleepSeconds = 2 ** sleepSecondsMultiply
-                        echo.out(u"API call error. Trying again in %02d second(s)." % sleepSeconds, "EXCEPTION")
+                        self.echo.out(u"API call error. Trying again in %02d second(s)." % sleepSeconds, "EXCEPTION")
                         time.sleep(sleepSeconds)
                         sleepSecondsMultiply += 1
                         retrys += 1

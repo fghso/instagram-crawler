@@ -24,6 +24,7 @@ class BaseCrawler:
         
         """
         self._extractConfig(configurationsDictionary)
+        self.echo = common.EchoHandler(self.config["echo"])
        
     def _extractConfig(self, configurationsDictionary):
         """Extract and store configurations.
@@ -59,8 +60,7 @@ class ImagesCrawler(BaseCrawler):
     #    3 => Successful collection
     #   -4 => Error in one of the media
     def crawl(self, resourceID, filters):      
-        echo = common.EchoHandler(self.config)
-        echo.out(u"User ID received: %s." % resourceID)
+        self.echo.out(u"User ID received: %s." % resourceID)
         
         # Configure exception handling
         maxNumberOfRetrys = 8
@@ -82,7 +82,7 @@ class ImagesCrawler(BaseCrawler):
         
         # Execute collection
         for media in feed:
-            echo.out(u"Media: %s." % media["id"])
+            self.echo.out(u"Media: %s." % media["id"])
             while (True):
                 try:
                     header = {"User-Agent" : "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.11 (KHTML, like Gecko) Chrome/23.0.1271.64 Safari/537.11", "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"}
@@ -91,13 +91,13 @@ class ImagesCrawler(BaseCrawler):
                     imageData = urllib2.urlopen(request).read()
                 except Exception as error:
                     if type(error) == urllib2.HTTPError:
-                        echo.out(error, "ERROR")
+                        self.echo.out(error, "ERROR")
                         responseCode = -4
                         break
                     else:
                         if (retrys < maxNumberOfRetrys):
                             sleepSeconds = 2 ** sleepSecondsMultiply
-                            echo.out(u"Request error. Trying again in %02d second(s)." % sleepSeconds, "EXCEPTION")
+                            self.echo.out(u"Request error. Trying again in %02d second(s)." % sleepSeconds, "EXCEPTION")
                             time.sleep(sleepSeconds)
                             sleepSecondsMultiply += 1
                             retrys += 1

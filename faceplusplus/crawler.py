@@ -24,6 +24,7 @@ class BaseCrawler:
         
         """
         self._extractConfig(configurationsDictionary)
+        self.echo = common.EchoHandler(self.config["echo"])
        
     def _extractConfig(self, configurationsDictionary):
         """Extract and store configurations.
@@ -56,8 +57,6 @@ class BaseCrawler:
 
 class FPPURLCrawler(BaseCrawler):
     def crawl(self, resourceID, filters):
-        echo = common.EchoHandler(self.config)
-        
         # Configure data storage directory
         #fppBaseDir = "../../data/fpp"
         fppBaseDir = "../../data/fppselfies"
@@ -72,7 +71,7 @@ class FPPURLCrawler(BaseCrawler):
         # Check if the file already exists
         fppFilePath = os.path.join(fppDataDir, "%s.json" % resourceID)
         if os.path.isfile(fppFilePath): 
-            echo.out(u"Media %s already exists." % resourceID)
+            self.echo.out(u"Media %s already exists." % resourceID)
             return (None, extraInfo, None)
         
         # Extract filters
@@ -84,7 +83,7 @@ class FPPURLCrawler(BaseCrawler):
         apiKey = application["apikey"]
         apiSecret = application["apisecret"]
         api = API(srv = apiServer, key = apiKey, secret = apiSecret, timeout = 60, max_retries = 0, retry_delay = 0)
-        echo.out(u"ID: %s (App: %s)." % (resourceID, application["name"]))
+        self.echo.out(u"ID: %s (App: %s)." % (resourceID, application["name"]))
         
         # Execute collection
         attributes = ["gender", "age", "race", "smiling", "glass", "pose"]
@@ -115,8 +114,7 @@ class FPPURLCrawler(BaseCrawler):
         
 class FPPRandomMediaCrawler(BaseCrawler):  
     def crawl(self, resourceID, filters):
-        echo = common.EchoHandler(self.config)
-        echo.out(u"User ID received: %s." % resourceID)
+        self.echo.out(u"User ID received: %s." % resourceID)
         
         # Extract filters
         application = filters[0]["data"]["application"]
@@ -126,7 +124,7 @@ class FPPRandomMediaCrawler(BaseCrawler):
         apiKey = application["apikey"]
         apiSecret = application["apisecret"]
         api = API(srv = apiServer, key = apiKey, secret = apiSecret, timeout = 5, max_retries = 0, retry_delay = 0)
-        echo.out(u"App: %s." % str(application["name"]))
+        self.echo.out(u"App: %s." % str(application["name"]))
     
         # Configure data storage directory
         fppBaseDir = "../../data/fpp"
@@ -148,7 +146,7 @@ class FPPRandomMediaCrawler(BaseCrawler):
         # Execute collection
         attributes = ["gender", "age", "race", "smiling", "glass", "pose"]
         for i, media in enumerate(feedList):
-            echo.out(u"Collecting media %d." % (i + 1))
+            self.echo.out(u"Collecting media %d." % (i + 1))
             try:
                 response = api.detection.detect(url = media["images"]["low_resolution"]["url"], attribute = attributes)
             except Exception as error: 
