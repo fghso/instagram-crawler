@@ -63,7 +63,7 @@ class FppAppFilter(BaseFilter):
         BaseFilter._extractConfig(self, configurationsDictionary)
         self.config["appsfile"] = self.config["appsfile"].encode("utf-8")
         self.config["maxapprequests"] = int(self.config["maxapprequests"])
-        if (self.config["maxapprequests"] < 0): raise ValueError("Parameter maxapprequests must be greater than or equal to zero. Zero means no boundary on the number of requests.")
+        if (self.config["maxapprequests"] < 0): raise ValueError("Parameter 'maxapprequests' must be greater than or equal to zero. Zero means no boundary on the number of requests.")
         
     def _loadAppFile(self):
         # Open file
@@ -115,7 +115,7 @@ class InstagramAppFilter(BaseFilter):
         #self.config["dynamicallyload"] = common.str2bool(self.config["dynamicallyload"])
         self.config["resetpercent"] = float(self.config["resetpercent"]) / 100
         self.config["sleeptimedelta"] = int(self.config["sleeptimedelta"])
-        if (self.config["sleeptimedelta"] < 1): raise ValueError("Parameter sleeptimedelta must be greater than 1 second.")
+        if (self.config["sleeptimedelta"] < 1): raise ValueError("Parameter 'sleeptimedelta' must be greater than 1 second.")
         
     def setup(self): self.local.lastAppName = None
         
