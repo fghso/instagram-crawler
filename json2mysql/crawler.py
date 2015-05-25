@@ -23,6 +23,30 @@ class FeedsImporter(BaseCrawler):
     def __init__(self, configurationsDictionary):
         BaseCrawler.__init__(self, configurationsDictionary)
         self.connection = mysql.connector.connect(**self.config["connargs"]) 
+        
+        # INSERT queries
+        self.insertMedia = "INSERT INTO media (`users_pk_ref`, `id`, `type`, `filter`, `link`, `created_time`, `users_in_photo_count`, `tags_count`, `comments_count`, `likes_count`) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+        self.insertTags = "INSERT INTO tags (`media_pk_ref`, `tag`) VALUES (%s, %s)"
+        self.insertImages = "INSERT INTO images (`media_pk_ref`, `low_res_url`, `thumbnail_url`, `std_res_url`) VALUES (%s, %s, %s, %s)"
+        self.insertLocations = "INSERT INTO locations (`media_pk_ref`, `id`, `name`, `latitude`, `longitude`) VALUES (%s, %s, %s, %s, %s)"
+        self.insertComments = "INSERT INTO comments (`media_pk_ref`, `id`, `created_time`, `text`, `from_id`, `from_profile_picture`) VALUES (%s, %s, %s, %s, %s, %s)"
+        self.insertCaptions = "INSERT INTO captions (`media_pk_ref`, `id`, `created_time`, `text`, `from_id`, `from_profile_picture`) VALUES (%s, %s, %s, %s, %s, %s)"
+        self.insertLikes = "INSERT INTO likes (`media_pk_ref`, `from_id`, `from_profile_picture`) VALUES (%s, %s, %s)"
+        
+        # ON DUPLICATE KEY UPDATE clauses
+        if self.config["onduplicateupdate"]:
+            self.insertMedia += " ON DUPLICATE KEY UPDATE `media_pk` = LAST_INSERT_ID(`media_pk`), `users_pk_ref` = VALUES(`users_pk_ref`), `id` = VALUES(`id`), `type` = VALUES(`type`), `filter` = VALUES(`filter`), `link` = VALUES(`link`), `created_time` = VALUES(`created_time`), `users_in_photo_count` = VALUES(`users_in_photo_count`), `tags_count` = VALUES(`tags_count`), `comments_count` = VALUES(`comments_count`), `likes_count` = VALUES(`likes_count`)"
+            self.insertTags += " ON DUPLICATE KEY UPDATE `media_pk_ref` = VALUES(`media_pk_ref`), `tag` = VALUES(`tag`)"
+            self.insertImages += " ON DUPLICATE KEY UPDATE `media_pk_ref` = VALUES(`media_pk_ref`), `low_res_url` = VALUES(`low_res_url`), `thumbnail_url` = VALUES(`thumbnail_url`), `std_res_url` = VALUES(`std_res_url`)"
+            self.insertLocations += " ON DUPLICATE KEY UPDATE `media_pk_ref` = VALUES(`media_pk_ref`), `id` = VALUES(`id`), `name` = VALUES(`name`), `latitude` = VALUES(`latitude`), `longitude` = VALUES(`longitude`)"
+            self.insertComments += " ON DUPLICATE KEY UPDATE `media_pk_ref` = VALUES(`media_pk_ref`), `id` = VALUES(`id`), `created_time` = VALUES(`created_time`), `text` = VALUES(`text`), `from_id` = VALUES(`from_id`), `from_profile_picture` = VALUES(`from_profile_picture`)"
+            self.insertCaptions += " ON DUPLICATE KEY UPDATE `media_pk_ref` = VALUES(`media_pk_ref`), `id` = VALUES(`id`), `created_time` = VALUES(`created_time`), `text` = VALUES(`text`), `from_id` = VALUES(`from_id`), `from_profile_picture` = VALUES(`from_profile_picture`)"
+            self.insertLikes += " ON DUPLICATE KEY UPDATE `media_pk_ref` = VALUES(`media_pk_ref`), `from_id` = VALUES(`from_id`), `from_profile_picture` = VALUES(`from_profile_picture`)"
+        
+    def _extractConfig(self, configurationsDictionary):
+        BaseCrawler._extractConfig(self, configurationsDictionary)
+        if ("onduplicateupdate" not in self.config): self.config["onduplicateupdate"] = False
+        else: self.config["onduplicateupdate"] = common.str2bool(self.config["onduplicateupdate"])
 
     def crawl(self, resourceID, filters):
         self.echo.out(u"User ID received: %s." % resourceID)
@@ -35,62 +59,56 @@ class FeedsImporter(BaseCrawler):
         # Extract filters
         userPK = filters[0]["data"]["users_pk"]
         
-        # Define queries
-        insertMedia = "INSERT INTO media (`users_pk_ref`, `id`, `type`, `filter`, `link`, `created_time`, `users_in_photo_count`, `tags_count`, `comments_count`, `likes_count`) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
-        insertTags = "INSERT INTO tags (`media_pk_ref`, `tag`) VALUES (%s, %s)"
-        insertImages = "INSERT INTO images (`media_pk_ref`, `low_res_url`, `thumbnail_url`, `std_res_url`) VALUES (%s, %s, %s, %s)"
-        insertLocations = "INSERT INTO locations (`media_pk_ref`, `id`, `name`, `latitude`, `longitude`) VALUES (%s, %s, %s, %s, %s)"
-        insertComments = "INSERT INTO comments (`media_pk_ref`, `id`, `created_time`, `text`, `from_id`, `from_profile_picture`) VALUES (%s, %s, %s, %s, %s, %s)"
-        insertCaptions = "INSERT INTO captions (`media_pk_ref`, `id`, `created_time`, `text`, `from_id`, `from_profile_picture`) VALUES (%s, %s, %s, %s, %s, %s)"
-        insertLikes = "INSERT INTO likes (`media_pk_ref`, `from_id`, `from_profile_picture`) VALUES (%s, %s, %s)"
-        
         # Execute import
         cursor = self.connection.cursor()
         cursor.execute("SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci")
-        for mediaObj in feed:
-            # General information
-            data = (userPK, mediaObj["id"], mediaObj["type"], mediaObj["filter"], mediaObj["link"], mediaObj["created_time"], len(mediaObj["users_in_photo"]), len(mediaObj["tags"]), mediaObj["comments"]["count"], mediaObj["likes"]["count"])
-            cursor.execute(insertMedia, data)
-            mediaPK = cursor.lastrowid
-            
-            # Tags
-            data = []
-            for tag in mediaObj["tags"]:
-                data.append((mediaPK, tag))
-            cursor.executemany(insertTags, data)
-            
-            # Images
-            data = (mediaPK, mediaObj["images"]["low_resolution"]["url"], mediaObj["images"]["thumbnail"]["url"], mediaObj["images"]["standard_resolution"]["url"])
-            cursor.execute(insertImages, data)
-            
-            # Locations
-            if mediaObj["location"] is not None:
-                data = [mediaPK, None, None, None, None]
-                if "id" in mediaObj["location"]: data[1] = mediaObj["location"]["id"]
-                if "name" in mediaObj["location"]: data[2] = mediaObj["location"]["name"]
-                if "latitude" in mediaObj["location"]: data[3] = mediaObj["location"]["latitude"]
-                if "longitude" in mediaObj["location"]: data[4] = mediaObj["location"]["longitude"]
-                cursor.execute(insertLocations, data)
-            
-            # Comments
-            data = []
-            if (mediaObj["comments"]["count"] > 0):
-                for comment in mediaObj["comments"]["data"]:
-                    data.append((mediaPK, comment["id"], comment["created_time"], comment["text"], comment["from"]["id"], comment["from"]["profile_picture"]))
-                cursor.executemany(insertComments, data)
-                    
-            # Captions
-            if mediaObj["caption"] is not None:
-                data = (mediaPK, mediaObj["caption"]["id"], mediaObj["caption"]["created_time"], mediaObj["caption"]["text"], mediaObj["caption"]["from"]["id"], mediaObj["caption"]["from"]["profile_picture"])
-                cursor.execute(insertCaptions, data)
+        try:
+            for mediaObj in feed:
+                # General information
+                data = (userPK, mediaObj["id"], mediaObj["type"], mediaObj["filter"], mediaObj["link"], mediaObj["created_time"], len(mediaObj["users_in_photo"]), len(mediaObj["tags"]), mediaObj["comments"]["count"], mediaObj["likes"]["count"])
+                cursor.execute(self.insertMedia, data)
+                mediaPK = cursor.lastrowid
                 
-            # Likes
-            data = []
-            for like in mediaObj["likes"]["data"]:
-                data.append((mediaPK, like["id"], like["profile_picture"]))
-            cursor.executemany(insertLikes, data)
-            
-        self.connection.commit()
+                # Tags
+                data = []
+                for tag in mediaObj["tags"]:
+                    data.append((mediaPK, tag))
+                cursor.executemany(self.insertTags, data)
+                
+                # Images
+                data = (mediaPK, mediaObj["images"]["low_resolution"]["url"], mediaObj["images"]["thumbnail"]["url"], mediaObj["images"]["standard_resolution"]["url"])
+                cursor.execute(self.insertImages, data)
+                
+                # Locations
+                if mediaObj["location"] is not None:
+                    data = [mediaPK, None, None, None, None]
+                    if "id" in mediaObj["location"]: data[1] = mediaObj["location"]["id"]
+                    if "name" in mediaObj["location"]: data[2] = mediaObj["location"]["name"]
+                    if "latitude" in mediaObj["location"]: data[3] = mediaObj["location"]["latitude"]
+                    if "longitude" in mediaObj["location"]: data[4] = mediaObj["location"]["longitude"]
+                    cursor.execute(self.insertLocations, data)
+                
+                # Comments
+                data = []
+                if (mediaObj["comments"]["count"] > 0):
+                    for comment in mediaObj["comments"]["data"]:
+                        data.append((mediaPK, comment["id"], comment["created_time"], comment["text"], comment["from"]["id"], comment["from"]["profile_picture"]))
+                    cursor.executemany(self.insertComments, data)
+                        
+                # Captions
+                if mediaObj["caption"] is not None:
+                    data = (mediaPK, mediaObj["caption"]["id"], mediaObj["caption"]["created_time"], mediaObj["caption"]["text"], mediaObj["caption"]["from"]["id"], mediaObj["caption"]["from"]["profile_picture"])
+                    cursor.execute(self.insertCaptions, data)
+                    
+                # Likes
+                data = []
+                for like in mediaObj["likes"]["data"]:
+                    data.append((mediaPK, like["id"], like["profile_picture"]))
+                cursor.executemany(self.insertLikes, data)
+            self.connection.commit()
+        except:
+            self.connection.rollback()
+            raise
         
         return (None, None, None)        
         
