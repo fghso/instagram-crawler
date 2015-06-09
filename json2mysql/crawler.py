@@ -2,6 +2,8 @@
 
 import os
 import json
+import shutil
+import stat
 import common
 import mysql.connector
 
@@ -22,9 +24,9 @@ class BaseCrawler:
 class FeedsImporter(BaseCrawler):  
     def __init__(self, configurationsDictionary):
         BaseCrawler.__init__(self, configurationsDictionary)
-        self.connection = mysql.connector.connect(**self.config["connargs"]) 
+        self.connection = mysql.connector.connect(**self.config["connargs"][0]) 
         
-        # INSERT queries
+        # Queries
         self.insertMedia = "INSERT INTO media (`users_pk_ref`, `id`, `type`, `filter`, `link`, `created_time`, `users_in_photo_count`, `tags_count`, `comments_count`, `likes_count`) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
         self.insertTags = "INSERT INTO tags (`media_pk_ref`, `tag`) VALUES (%s, %s)"
         self.insertImages = "INSERT INTO images (`media_pk_ref`, `low_res_url`, `thumbnail_url`, `std_res_url`) VALUES (%s, %s, %s, %s)"
@@ -32,27 +34,12 @@ class FeedsImporter(BaseCrawler):
         self.insertComments = "INSERT INTO comments (`media_pk_ref`, `id`, `created_time`, `text`, `from_id`, `from_profile_picture`) VALUES (%s, %s, %s, %s, %s, %s)"
         self.insertCaptions = "INSERT INTO captions (`media_pk_ref`, `id`, `created_time`, `text`, `from_id`, `from_profile_picture`) VALUES (%s, %s, %s, %s, %s, %s)"
         self.insertLikes = "INSERT INTO likes (`media_pk_ref`, `from_id`, `from_profile_picture`) VALUES (%s, %s, %s)"
-        
-        # ON DUPLICATE KEY UPDATE clauses
-        if self.config["onduplicateupdate"]:
-            self.insertMedia += " ON DUPLICATE KEY UPDATE `media_pk` = LAST_INSERT_ID(`media_pk`), `users_pk_ref` = VALUES(`users_pk_ref`), `id` = VALUES(`id`), `type` = VALUES(`type`), `filter` = VALUES(`filter`), `link` = VALUES(`link`), `created_time` = VALUES(`created_time`), `users_in_photo_count` = VALUES(`users_in_photo_count`), `tags_count` = VALUES(`tags_count`), `comments_count` = VALUES(`comments_count`), `likes_count` = VALUES(`likes_count`)"
-            self.insertTags += " ON DUPLICATE KEY UPDATE `media_pk_ref` = VALUES(`media_pk_ref`), `tag` = VALUES(`tag`)"
-            self.insertImages += " ON DUPLICATE KEY UPDATE `media_pk_ref` = VALUES(`media_pk_ref`), `low_res_url` = VALUES(`low_res_url`), `thumbnail_url` = VALUES(`thumbnail_url`), `std_res_url` = VALUES(`std_res_url`)"
-            self.insertLocations += " ON DUPLICATE KEY UPDATE `media_pk_ref` = VALUES(`media_pk_ref`), `id` = VALUES(`id`), `name` = VALUES(`name`), `latitude` = VALUES(`latitude`), `longitude` = VALUES(`longitude`)"
-            self.insertComments += " ON DUPLICATE KEY UPDATE `media_pk_ref` = VALUES(`media_pk_ref`), `id` = VALUES(`id`), `created_time` = VALUES(`created_time`), `text` = VALUES(`text`), `from_id` = VALUES(`from_id`), `from_profile_picture` = VALUES(`from_profile_picture`)"
-            self.insertCaptions += " ON DUPLICATE KEY UPDATE `media_pk_ref` = VALUES(`media_pk_ref`), `id` = VALUES(`id`), `created_time` = VALUES(`created_time`), `text` = VALUES(`text`), `from_id` = VALUES(`from_id`), `from_profile_picture` = VALUES(`from_profile_picture`)"
-            self.insertLikes += " ON DUPLICATE KEY UPDATE `media_pk_ref` = VALUES(`media_pk_ref`), `from_id` = VALUES(`from_id`), `from_profile_picture` = VALUES(`from_profile_picture`)"
-        
-    def _extractConfig(self, configurationsDictionary):
-        BaseCrawler._extractConfig(self, configurationsDictionary)
-        if ("onduplicateupdate" not in self.config): self.config["onduplicateupdate"] = False
-        else: self.config["onduplicateupdate"] = common.str2bool(self.config["onduplicateupdate"])
-
+                
     def crawl(self, resourceID, filters):
         self.echo.out(u"User ID received: %s." % resourceID)
         
         # Load user feed file
-        feedsBaseDir = "../../data/feeds"
+        feedsBaseDir = "../../data-cosn/feeds"
         feedsFilePath = os.path.join(feedsBaseDir, str(int(resourceID) % 1000), "%s.feed" % resourceID)
         with open(feedsFilePath, "r") as feedFile: feed = json.load(feedFile)
         
@@ -113,62 +100,100 @@ class FeedsImporter(BaseCrawler):
         return (None, None, None)        
         
 
-class FPPURLCrawler(BaseCrawler):
-    def crawl(self, resourceID, filters):
-        # Configure data storage directory
-        #fppBaseDir = "../../data/fpp"
-        fppBaseDir = "../../data/fppselfies"
-        fppSubDir = str(int(resourceID.split("_")[0]) % 1000) # OBS: The division here group the media by media ID, instead of group by user ID. To group by user ID it is necessary to change to resourceID.split("_")[1].
-        fppDataDir = os.path.join(fppBaseDir, fppSubDir)
-        if not os.path.exists(fppDataDir): os.makedirs(fppDataDir)
+class FPPImporter(BaseCrawler):
+    def __init__(self, configurationsDictionary):
+        BaseCrawler.__init__(self, configurationsDictionary)
+        self.instaConnection = mysql.connector.connect(**self.config["connargs"][0]) 
+        self.crawlerConnection = mysql.connector.connect(**self.config["connargs"][1]) 
         
-        # Initialize return variables
-        #extraInfo = {"mediaerrors": []}
-        extraInfo = {"mediaerrors": [], "output": []}
-        
-        # Check if the file already exists
-        fppFilePath = os.path.join(fppDataDir, "%s.json" % resourceID)
-        if os.path.isfile(fppFilePath): 
-            self.echo.out(u"Media %s already exists." % resourceID)
-            return (None, extraInfo, None)
-        
-        # Extract filters
-        imageURL = filters[0]["data"]["url"]
-        application = filters[1]["data"]["application"]
-    
-        # Get authenticated API object
-        apiServer = application["apiserver"]
-        apiKey = application["apikey"]
-        apiSecret = application["apisecret"]
-        api = API(srv = apiServer, key = apiKey, secret = apiSecret, timeout = 60, max_retries = 0, retry_delay = 0)
-        self.echo.out(u"ID: %s (App: %s)." % (resourceID, application["name"]))
-        
-        # Execute collection
-        attributes = ["gender", "age", "race", "smiling", "glass", "pose"]
-        try:
-            response = api.detection.detect(url = imageURL, attribute = attributes)
-        except Exception as error: 
-            # HTTP error codes: http://www.faceplusplus.com/detection_detect/
-            if isinstance(error, APIError): message = "%d: %s" % (error.code, json.loads(error.body)["error"])
-            # socket.error and urllib2.URLError 
-            else: message = str(error)
-            extraInfo["mediaerrors"].append((resourceID, {"error": message}))
-        else: 
-            with open(fppFilePath, "w") as fppFile: json.dump(response, fppFile)
-            
-            for face in response["face"]:
-                faceInfo = filters[0]["data"]
-                faceInfo["gender_val"] = face["attribute"]["gender"]["value"]
-                faceInfo["gender_cnf"] = face["attribute"]["gender"]["confidence"]
-                faceInfo["race_val"] = face["attribute"]["race"]["value"]
-                faceInfo["race_cnf"] = face["attribute"]["race"]["confidence"]
-                faceInfo["smile"] = face["attribute"]["smiling"]["value"]
-                faceInfo["age_val"] = face["attribute"]["age"]["value"]
-                faceInfo["age_rng"] = face["attribute"]["age"]["range"]
-                extraInfo["output"].append((resourceID, faceInfo))
-        
-        return (None, extraInfo, None)
+        # Queries
+        self.selectMediaPK = "SELECT `media_pk` FROM `media` WHERE `id` = %s"
+        self.selectUsers = "SELECT `users_pk` FROM `users` WHERE `id` = %s"
+        self.selectComments = "SELECT `comments_pk` FROM `comments` WHERE `from_id` = %s LIMIT 1"
+        self.selectLikes = "SELECT `likes_pk` FROM `likes` WHERE `from_id` = %s LIMIT 1"
+        self.insertFaces = "INSERT INTO `faces` (`media_pk_ref`, `gender_value`, `gender_confidence`, `age_value`, `age_range`, `smiling_value`) VALUES (%s, %s, %s, %s, %s, %s)"
+        self.insertCollectMedia = "INSERT INTO `collect_fpp_media` (`status`, `media_pk`, `id`, `faces_count`, `type`) VALUES (%s, %s, %s, %s, %s)"
+        self.insertProfileFaces = "INSERT INTO `profile_faces` (`user_id`, `from_table`, `gender_value`, `gender_confidence`, `age_value`, `age_range`, `smiling_value`) VALUES (%s, %s, %s, %s, %s, %s, %s)"
+        self.insertCollectProfiles = "INSERT INTO `collect_fpp_profiles` (`status`, `id`, `from_table`, `faces_count`) VALUES (%s, %s, %s, %s)"
+        self.insertExtraFaces = "INSERT INTO `extra_faces` (`media_id`, `gender_value`, `gender_confidence`, `age_value`, `age_range`, `smiling_value`) VALUES (%s, %s, %s, %s, %s, %s)"
 
+    def crawl(self, resourceID, filters):
+        # Configure data directories
+        fppOldBaseDir = "../../data-cosn/fppmerge" 
+        fppNewBaseDir = "../../data-cosn/reorgfpp" 
+        fppDataDir = os.path.join(fppOldBaseDir, resourceID)
+
+        # Open cursors
+        instaCursor = self.instaConnection.cursor()
+        crawlerCursor = self.crawlerConnection.cursor()
+        instaCursor.execute("SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci")
+        crawlerCursor.execute("SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci")
         
+        # Execute import
+        try: 
+            for fileName in os.listdir(fppDataDir):
+                with open(os.path.join(fppDataDir, fileName), "r") as fileObject: fppContent = json.load(fileObject)
+                fileBaseName = os.path.splitext(fileName)[0]
+                entityID = fileBaseName.split("_")
+            
+                # Media object
+                if len(entityID) > 1:
+                    instaCursor.execute(self.selectMediaPK, (fileBaseName,))
+                    result = instaCursor.fetchone()
+                    data = []
+                    if result:
+                        mediaPK = result[0]
+                        for face in fppContent["face"]:
+                            data.append((mediaPK, face["attribute"]["gender"]["value"], face["attribute"]["gender"]["confidence"], face["attribute"]["age"]["value"], face["attribute"]["age"]["range"], face["attribute"]["smiling"]["value"]))
+                        if data: instaCursor.executemany(self.insertFaces, data)
+                        data = (2, mediaPK, fileBaseName, len(fppContent["face"]), "cache")
+                        crawlerCursor.execute(self.insertCollectMedia, data)
+                    else:
+                        for face in fppContent["face"]:
+                            data.append((fileBaseName, face["attribute"]["gender"]["value"], face["attribute"]["gender"]["confidence"], face["attribute"]["age"]["value"], face["attribute"]["age"]["range"], face["attribute"]["smiling"]["value"]))
+                        if data: instaCursor.executemany(self.insertExtraFaces, data)
+                        else: instaCursor.execute(self.insertExtraFaces, (fileBaseName, None, None, None, None, None))
+                    
+                    fppSubDir = os.path.join(fppNewBaseDir, "media", str(int(entityID[1]) % 1000))
+                    if not os.path.exists(fppSubDir): os.makedirs(fppSubDir)
+                    fppNewPath = os.path.join(fppSubDir, "%s.fpp" % fileBaseName)
+                    shutil.copy(os.path.join(fppDataDir, fileName), fppNewPath)
+                    os.chmod(fppNewPath, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IWGRP | stat.S_IROTH)
+                    
+                # Profile
+                else:
+                    fromTable = "users"
+                    instaCursor.execute(self.selectUsers, (fileBaseName,))
+                    result = instaCursor.fetchone()
+                    if not result: 
+                        fromTable = "comments"
+                        instaCursor.execute(self.selectComments, (fileBaseName,))
+                        result = instaCursor.fetchone()
+                        if not result: 
+                            fromTable = "likes"
+                            instaCursor.execute(self.selectLikes, (fileBaseName,))
+                            result = instaCursor.fetchone()
+                            if not result: fromTable = "unknown"
+                    data = []
+                    for face in fppContent["face"]:
+                        data.append((fileBaseName, fromTable, face["attribute"]["gender"]["value"], face["attribute"]["gender"]["confidence"], face["attribute"]["age"]["value"], face["attribute"]["age"]["range"], face["attribute"]["smiling"]["value"]))
+                    if data: instaCursor.executemany(self.insertProfileFaces, data)
+                    data = (2, fileBaseName, fromTable, len(fppContent["face"]))
+                    crawlerCursor.execute(self.insertCollectProfiles, data)
+                    
+                    fppSubDir = os.path.join(fppNewBaseDir, "profiles", str(int(entityID[0]) % 1000))
+                    if not os.path.exists(fppSubDir): os.makedirs(fppSubDir)
+                    fppNewPath = os.path.join(fppSubDir, "%s.fpp" % fileBaseName)
+                    shutil.copy(os.path.join(fppDataDir, fileName), fppNewPath)
+                    os.chmod(fppNewPath, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IWGRP | stat.S_IROTH)
+            
+            self.instaConnection.commit()
+            self.crawlerConnection.commit()
+        except:
+            self.instaConnection.rollback()
+            self.crawlerConnection.rollback()
+            raise   
+            
+        return (None, None, None)
 
       

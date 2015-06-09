@@ -10,7 +10,7 @@ import mysql.connector
 # Load configurations file
 configFile = open("config.xml", "r")
 configDict = xmltodict.parse(configFile.read())
-config = configDict["config"]["server"]["persistence"]
+config = configDict["config"]["client"]["crawler"]
 
 # Open database connection
 config["connargs"]["charset"] = "utf8"
