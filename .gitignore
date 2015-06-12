@@ -56,7 +56,7 @@ docs/_build/
 faceplusplus/fpp
 inout/
 ids/
-json2mysql/aux_scripts
+json2mysql/auxiliary
 *logs/
 *.log
 *.out

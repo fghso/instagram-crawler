@@ -30,7 +30,7 @@ class FPPFromDatabaseCrawler(BaseCrawler):
         
         # Queries
         self.insertFaces = "INSERT INTO `faces` (`media_pk_ref`, `gender_value`, `gender_confidence`, `age_value`, `age_range`, `smiling_value`) VALUES (%s, %s, %s, %s, %s, %s)"
-        self.insertProfileFaces = "INSERT INTO `profile_faces` (`user_id`, `from_table` `gender_value`, `gender_confidence`, `age_value`, `age_range`, `smiling_value`) VALUES (%s, %s, %s, %s, %s, %s, %s)"
+        self.insertProfileFaces = "INSERT INTO `profile_faces` (`user_id`, `from_table`, `gender_value`, `gender_confidence`, `age_value`, `age_range`, `smiling_value`) VALUES (%s, %s, %s, %s, %s, %s, %s)"
 
     def crawl(self, resourceID, filters):      
         # Configure FPP file path
@@ -43,29 +43,18 @@ class FPPFromDatabaseCrawler(BaseCrawler):
         fppFilePath = os.path.join(fppDataDir, "%s.fpp" % resourceID)
         
         # Extract filters
-        if len(fppHashID) > 1: mediaPK = filters[0]["data"]["media_pk"]
-        else: fromTable = filters[0]["data"]["from_table"]
+        if len(fppHashID) > 1: 
+            mediaPK = filters[0]["data"]["media_pk"]
+        else: 
+            fromTable = filters[0]["data"]["from_table"]
+            imageURL = filters[0]["data"]["profile_picture"]
         application = filters[1]["data"]["application"]
-        
-        # Open cursor
-        cursor = self.connection.cursor()
-        cursor.execute("SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci")
         
         # Get FPP response
         if os.path.isfile(fppFilePath): 
             self.echo.out(u"Media %s already exists." % resourceID)
             with open(fppFilePath, "r") as fppFile: response = json.load(fppFile)
         else:
-            # Get image URL
-            if len(fppHashID) > 1: 
-                cursor.execute("SELECT `std_res_url` FROM `images` WHERE `media_pk_ref` = %s" % mediaPK)
-            elif (fromTable == "users"): 
-                cursor.execute("SELECT `profile_picture` FROM `users` WHERE `id` = %s" % resourceID)
-            elif (fromTable == "comments"): 
-                cursor.execute("SELECT `from_profile_picture` FROM `comments` WHERE `from_id` = %s" % resourceID)
-            else: cursor.execute("SELECT `from_profile_picture` FROM `likes` WHERE `from_id` = %s" % resourceID)
-            imageURL = cursor.fetchone()[0]
-        
             # Get authenticated API object
             apiServer = application["apiserver"]
             apiKey = application["apikey"]
@@ -96,14 +85,15 @@ class FPPFromDatabaseCrawler(BaseCrawler):
             else: data.append((resourceID, fromTable, face["attribute"]["gender"]["value"], face["attribute"]["gender"]["confidence"], face["attribute"]["age"]["value"], face["attribute"]["age"]["range"], face["attribute"]["smiling"]["value"]))
         if data: 
             try:
-                cursor.executemany(self.insertFaces, data)
+                cursor = self.connection.cursor()
+                cursor.execute("SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci")
+                if len(fppHashID) > 1: cursor.executemany(self.insertFaces, data)
+                else: cursor.executemany(self.insertProfileFaces, data)
                 self.connection.commit()
-                pass
+                cursor.close()
             except:
                 self.connection.rollback()
                 raise
-            finally:
-                cursor.close()
         
         resourceInfo = {"faces_count": len(response["face"])}
         return (resourceInfo, None, None)        
