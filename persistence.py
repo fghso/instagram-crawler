@@ -692,7 +692,7 @@ class MySQLPersistenceHandler(BasePersistenceHandler):
         self.infoColNames = [name for name in self.colNames if (name not in self.excludedColNames)]
         
         # Start select cache thread
-        self.resourcesQueue = Queue.Queue(self.config["selectcachesize"])
+        self.resourcesQueue = Queue.Queue()
         self.echo.out("Starting select cache. Querying database...")
         resourcesKeys = self._selectCacheQuery()
         if resourcesKeys: 
@@ -700,7 +700,7 @@ class MySQLPersistenceHandler(BasePersistenceHandler):
             for key in resourcesKeys: self.resourcesQueue.put(key[0])
             self.echo.out("Done.")
         else: 
-            self.echo.out("No available resources found. Still seeking...")
+            self.echo.out("No available resources found.")
             self.selectNoResourcesEvent.set()
         t = threading.Thread(target = self._selectCacheThread)
         t.daemon = True
@@ -709,12 +709,13 @@ class MySQLPersistenceHandler(BasePersistenceHandler):
     def _extractConfig(self, configurationsDictionary):
         BasePersistenceHandler._extractConfig(self, configurationsDictionary)
         if ("selectcachesize" not in self.config): raise KeyError("Parameter 'selectcachesize' must be specified.")
-        if (self.config["selectcachesize"] < 1): raise ValueError("Parameter 'selectcachesize' must be greater than zero.")
+        else: self.config["selectcachesize"] = int(self.config["selectcachesize"])
         if ("onduplicateupdate" not in self.config): self.config["onduplicateupdate"] = False
         else: self.config["onduplicateupdate"] = common.str2bool(self.config["onduplicateupdate"])
         
     def _selectCacheQuery(self):
-        query = "SELECT " + self.config["primarykeycolumn"] + " FROM " + self.config["table"] + " WHERE " + self.config["statuscolumn"] + " = %s ORDER BY " + self.config["primarykeycolumn"] + " LIMIT " + self.config["selectcachesize"] 
+        query = "SELECT " + self.config["primarykeycolumn"] + " FROM " + self.config["table"] + " WHERE " + self.config["statuscolumn"] + " = %s ORDER BY " + self.config["primarykeycolumn"]
+        if (self.config["selectcachesize"] > 0): query += " LIMIT %d" % self.config["selectcachesize"]
         connection = mysql.connector.connect(**self.config["connargs"])
         connection.autocommit = True
         cursor = connection.cursor()
@@ -728,28 +729,25 @@ class MySQLPersistenceHandler(BasePersistenceHandler):
         try:
             while True:
                 self.resourcesQueue.join()
-                if self.shutdownEvent.is_set(): break
-                if not self.selectNoResourcesEvent.is_set(): self.echo.out("Select cache empty. Querying database...")
-                resourcesKeys = self._selectCacheQuery()
-                if resourcesKeys: 
-                    if self.selectNoResourcesEvent.is_set(): self.echo.out("New resources available now.")
-                    self.selectNoResourcesEvent.clear()
-                    self.echo.out("Filling cache with resources keys...")
-                    for key in resourcesKeys: self.resourcesQueue.put(key[0])
-                    self.echo.out("Done.")
-                else: 
-                    if not self.selectNoResourcesEvent.is_set(): self.echo.out("No available resources found. Still seeking...")
-                    self.selectNoResourcesEvent.set()
-                    self.selectWaitCondition.acquire()
-                    self.selectWaitCondition.wait(10)
-                    self.selectWaitCondition.release()
+                with self.selectWaitCondition:
+                    if self.shutdownEvent.is_set(): break
+                    if not self.selectNoResourcesEvent.is_set(): self.echo.out("Select cache empty. Querying database...")
+                    resourcesKeys = self._selectCacheQuery()
+                    if resourcesKeys: 
+                        if self.selectNoResourcesEvent.is_set(): self.echo.out("New resources available now.")
+                        self.selectNoResourcesEvent.clear()
+                        self.echo.out("Filling cache with resources keys...")
+                        for key in resourcesKeys: self.resourcesQueue.put(key[0])
+                        self.echo.out("Done.")
+                    else: 
+                        if not self.selectNoResourcesEvent.is_set(): self.echo.out("No available resources found.")
+                        self.selectNoResourcesEvent.set()
+                        self.selectWaitCondition.wait()
         except: 
             self.selectCacheThreadExceptionEvent.set()
             self.echo.out("Exception while trying to fill select cache.", "EXCEPTION")
         else: 
-            self.selectWaitCondition.acquire()
-            self.selectWaitCondition.notify()
-            self.selectWaitCondition.release()
+            with self.selectWaitCondition: self.selectWaitCondition.notify()
             
     def _resetSelectCache(self):
         while not self.resourcesQueue.empty():
@@ -765,13 +763,14 @@ class MySQLPersistenceHandler(BasePersistenceHandler):
         # Try to get resource key from select cache
         while True:
             try: 
-                resourceKey = self.resourcesQueue.get(False, 10)
-                break
+                resourceKey = self.resourcesQueue.get_nowait()
             except Queue.Empty:
-                if self.selectNoResourcesEvent.is_set(): 
-                    return (None, None, None)
-                elif self.selectCacheThreadExceptionEvent.is_set(): 
+                if self.selectCacheThreadExceptionEvent.is_set(): 
                     raise RuntimeError("Exception in select cache thread. Execution of MySQLPersistenceHandler aborted.")
+                elif self.selectNoResourcesEvent.is_set(): 
+                    with self.selectWaitCondition: self.selectWaitCondition.notify()
+                    return (None, None, None)
+            else: break
 
         # Fetch resource information and mark it as being processed
         cursor = self.local.connection.cursor(dictionary = True)
@@ -802,6 +801,7 @@ class MySQLPersistenceHandler(BasePersistenceHandler):
         # statement. This method would be the best to use here but unfortunately it does not parse the DEFAULT keyword 
         # correctly. This way, the alternative is to pre-build the query and send it to cursor.execute() instead.
     
+        if not resourcesList: return
         cursor = self.local.connection.cursor()
         query = "INSERT INTO " + self.config["table"] + " (" + ", ".join(self.colNames) + ") VALUES "
         
@@ -854,9 +854,7 @@ class MySQLPersistenceHandler(BasePersistenceHandler):
         
         # Clear select cache, so reseted resources are collected as soon as possible
         self._resetSelectCache()
-        self.selectWaitCondition.acquire()
-        self.selectWaitCondition.notify()
-        self.selectWaitCondition.release()
+        with self.selectWaitCondition: self.selectWaitCondition.notify()
         
         return affectedRows
         
@@ -864,11 +862,9 @@ class MySQLPersistenceHandler(BasePersistenceHandler):
         self.local.connection.close()
         
     def shutdown(self):
-        self.selectWaitCondition.acquire()
-        self.shutdownEvent.set()
-        self._resetSelectCache()
-        self.selectWaitCondition.notify()
-        self.selectWaitCondition.wait()
-        self.selectWaitCondition.release()
-        
+        with self.selectWaitCondition:
+            self.shutdownEvent.set()
+            self._resetSelectCache()
+            self.selectWaitCondition.notify()
+            self.selectWaitCondition.wait()
         

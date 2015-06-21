@@ -12,6 +12,7 @@ import random
 import Queue
 import common
 import persistence
+import mysql.connector
 
 
 class BaseFilter(): 
@@ -51,6 +52,92 @@ class SaveResourcesFilter(BaseFilter):
 class ResourceInfoFilter(BaseFilter):
     def apply(self, resourceID, resourceInfo, extraInfo): return resourceInfo
     
+
+class MySQLBatchInsertFilter(BaseFilter):
+    def __init__(self, configurationsDictionary): 
+        BaseFilter.__init__(self, configurationsDictionary)
+        self.echo = common.EchoHandler()
+        self.insertThreadExceptionEvent = threading.Event()
+        self.shutdownEvent = threading.Event()
+        self.insertWaitCondition = threading.Condition()
+        
+        # Get column names
+        query = "SELECT * FROM " + self.config["table"] + " LIMIT 0"
+        connection = mysql.connector.connect(**self.config["connargs"])
+        cursor = connection.cursor()
+        cursor.execute(query)
+        cursor.fetchall()
+        self.colNames = cursor.column_names
+        cursor.close()
+        connection.close()
+        
+        # Start insert thread
+        self.resourcesQueue = Queue.Queue()
+        t = threading.Thread(target = self._insertThread)
+        t.daemon = True
+        t.start()
+        
+    def _extractConfig(self, configurationsDictionary):
+        BaseFilter._extractConfig(self, configurationsDictionary)
+        if ("batchsize" not in self.config): raise KeyError("Parameter 'batchsize' must be specified.")
+        else: self.config["batchsize"] = int(self.config["batchsize"])
+        if (self.config["batchsize"] < 1): raise ValueError("Parameter 'batchsize' must be greater than zero.")
+        if ("onduplicateupdate" not in self.config): self.config["onduplicateupdate"] = False
+        else: self.config["onduplicateupdate"] = common.str2bool(self.config["onduplicateupdate"])
+    
+    def callback(self, resourceID, resourceInfo, newResources, extraInfo): 
+        if self.insertThreadExceptionEvent.is_set(): raise RuntimeError("Exception in batch insert thread. Execution of MySQLBatchInsertFilter aborted.") 
+        extraResources = extraInfo["original"][self.name]
+        if not extraResources: return
+        for resource in extraResources: self.resourcesQueue.put(resource)
+        with self.insertWaitCondition: self.insertWaitCondition.notify()
+        
+    def _insertQuery(self):
+        if self.resourcesQueue.empty(): return
+        query = "INSERT INTO " + self.config["table"] + " (" + ", ".join(self.colNames) + ") VALUES "
+        
+        data = []
+        values = []
+        for i in range(self.config["batchsize"]): 
+            try: resource = self.resourcesQueue.get_nowait()
+            except Queue.Empty: break
+            resourceValues = []
+            for column in self.colNames:
+                if (column in resource): 
+                    resourceValues.append("%s")
+                    data.append(resource[column])
+                else: resourceValues.append("DEFAULT")
+            values.append("(" + ", ".join(resourceValues) + ")") 
+            
+        query += ", ".join(values)
+        if (self.config["onduplicateupdate"]):
+            query += " ON DUPLICATE KEY UPDATE " + ", ".join(["{0} = VALUES({0})".format(column) for column in self.colNames])
+        
+        connection = mysql.connector.connect(**self.config["connargs"])
+        cursor = connection.cursor()
+        cursor.execute(query, data)
+        connection.commit()
+        cursor.close()
+        connection.close()
+        
+    def _insertThread(self):
+        try: 
+            with self.insertWaitCondition:
+                while not self.shutdownEvent.is_set():
+                    if (self.resourcesQueue.qsize() >= self.config["batchsize"]): self._insertQuery()
+                    else: self.insertWaitCondition.wait()
+                self.insertWaitCondition.notify()
+        except: 
+            self.insertThreadExceptionEvent.set()
+            self.echo.out("Exception while inserting a batch of resources.", "EXCEPTION")
+
+    def shutdown(self):
+        with self.insertWaitCondition:
+            self.shutdownEvent.set()
+            self.insertWaitCondition.notify()
+            self.insertWaitCondition.wait()
+        self._insertQuery()
+        
     
 class FppAppFilter(BaseFilter):
     def __init__(self, configurationsDictionary): 
@@ -114,8 +201,8 @@ class InstagramAppFilter(BaseFilter):
         self.config["appsfile"] = self.config["appsfile"].encode("utf-8")
         #self.config["dynamicallyload"] = common.str2bool(self.config["dynamicallyload"])
         self.config["resetpercent"] = float(self.config["resetpercent"]) / 100
-        self.config["sleeptimedelta"] = int(self.config["sleeptimedelta"])
-        if (self.config["sleeptimedelta"] < 1): raise ValueError("Parameter 'sleeptimedelta' must be greater than 1 second.")
+        self.config["sleeptime"] = int(self.config["sleeptime"])
+        if (self.config["sleeptime"] < 1): raise ValueError("Parameter 'sleeptime' must be greater than 1 second.")
         
     def setup(self): self.local.lastAppName = None
         
@@ -148,8 +235,8 @@ class InstagramAppFilter(BaseFilter):
                             maxRate = rateRemaining
                             appIndex = i
                     if (maxRate == 0): 
-                        self.echo.out(u"Ratelimit of all applications exceeded, sleeping now for %d seconds..." % self.config["sleeptimedelta"], "WARNING")
-                        time.sleep(self.config["sleeptimedelta"])
+                        self.echo.out(u"Ratelimit of all applications exceeded, sleeping now for %d seconds..." % self.config["sleeptime"], "WARNING")
+                        time.sleep(self.config["sleeptime"])
                     else: break
                     
         return {"application": self.applicationList[appIndex]}
@@ -232,5 +319,5 @@ if __name__ == "__main__":
                               #"dynamicallyload": "False",
                               "method": "maxpost", # random, maxpost or maxpre
                               "resetpercent": 50,
-                              "sleeptimedelta": 60}).apply(None, None, None)
+                              "sleeptime": 60}).apply(None, None, None)
                               

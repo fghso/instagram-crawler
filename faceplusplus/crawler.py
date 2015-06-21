@@ -23,10 +23,10 @@ class BaseCrawler:
         return (None, None, None)
         
         
-class FPPFromDatabaseCrawler(BaseCrawler):
+class FPPCrawlerDB(BaseCrawler):
     def __init__(self, configurationsDictionary):
         BaseCrawler.__init__(self, configurationsDictionary)
-        self.connection = mysql.connector.connect(**self.config["connargs"]) 
+        self.connection = mysql.connector.connect(**self.config["connargs"])
         
         # Queries
         self.insertFaces = "INSERT INTO `faces` (`media_pk_ref`, `gender_value`, `gender_confidence`, `age_value`, `age_range`, `smiling_value`) VALUES (%s, %s, %s, %s, %s, %s)"
@@ -45,6 +45,7 @@ class FPPFromDatabaseCrawler(BaseCrawler):
         # Extract filters
         if len(fppHashID) > 1: 
             mediaPK = filters[0]["data"]["media_pk"]
+            imageURL = filters[0]["data"]["std_res_url"]
         else: 
             fromTable = filters[0]["data"]["from_table"]
             imageURL = filters[0]["data"]["profile_picture"]
@@ -72,7 +73,6 @@ class FPPFromDatabaseCrawler(BaseCrawler):
                 # socket.error and urllib2.URLError 
                 else: message = str(error)
                 resourceInfo = {"error": message}
-                print message
                 return (resourceInfo, None, None)
             else: 
                 with open(fppFilePath, "w") as fppFile: json.dump(response, fppFile)
@@ -84,22 +84,18 @@ class FPPFromDatabaseCrawler(BaseCrawler):
             if len(fppHashID) > 1: data.append((mediaPK, face["attribute"]["gender"]["value"], face["attribute"]["gender"]["confidence"], face["attribute"]["age"]["value"], face["attribute"]["age"]["range"], face["attribute"]["smiling"]["value"]))
             else: data.append((resourceID, fromTable, face["attribute"]["gender"]["value"], face["attribute"]["gender"]["confidence"], face["attribute"]["age"]["value"], face["attribute"]["age"]["range"], face["attribute"]["smiling"]["value"]))
         if data: 
-            try:
-                cursor = self.connection.cursor()
-                cursor.execute("SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci")
-                if len(fppHashID) > 1: cursor.executemany(self.insertFaces, data)
-                else: cursor.executemany(self.insertProfileFaces, data)
-                self.connection.commit()
-                cursor.close()
-            except:
-                self.connection.rollback()
-                raise
+            cursor = self.connection.cursor()
+            cursor.execute("SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci")
+            if len(fppHashID) > 1: cursor.executemany(self.insertFaces, data)
+            else: cursor.executemany(self.insertProfileFaces, data)
+            self.connection.commit()
+            cursor.close()
         
         resourceInfo = {"faces_count": len(response["face"])}
         return (resourceInfo, None, None)        
         
         
-class FPPFromFileCrawler(BaseCrawler):
+class FPPCrawlerFile(BaseCrawler):
     def crawl(self, resourceID, filters):
         # Configure FPP file path
         fppBaseDir = "../../data-cosn/fpp"
@@ -111,7 +107,7 @@ class FPPFromFileCrawler(BaseCrawler):
         fppFilePath = os.path.join(fppDataDir, "%s.fpp" % resourceID)
         
         # Initialize return variables
-        extraInfo = {"mediaerrors": [], "output": []}
+        extraInfo = {"MediaErrorsFilter": [], "OutputFilter": []}
         
         # Check if the file already exists
         if os.path.isfile(fppFilePath): 
@@ -138,7 +134,7 @@ class FPPFromFileCrawler(BaseCrawler):
             if isinstance(error, APIError): message = "%d: %s" % (error.code, json.loads(error.body)["error"])
             # socket.error and urllib2.URLError 
             else: message = str(error)
-            extraInfo["mediaerrors"].append((resourceID, {"error": message}))
+            extraInfo["MediaErrorsFilter"].append((resourceID, {"error": message}))
         else: 
             with open(fppFilePath, "w") as fppFile: json.dump(response, fppFile)
             
@@ -151,59 +147,6 @@ class FPPFromFileCrawler(BaseCrawler):
                 faceInfo["smile"] = face["attribute"]["smiling"]["value"]
                 faceInfo["age_val"] = face["attribute"]["age"]["value"]
                 faceInfo["age_rng"] = face["attribute"]["age"]["range"]
-                extraInfo["output"].append((resourceID, faceInfo))
+                extraInfo["OutputFilter"].append((resourceID, faceInfo))
         
         return (None, extraInfo, None)        
-
-        
-class FPPRandomMediaCrawler(BaseCrawler):  
-    def crawl(self, resourceID, filters):
-        self.echo.out(u"User ID received: %s." % resourceID)
-        
-        # Extract filters
-        application = filters[0]["data"]["application"]
-    
-        # Get authenticated API object
-        apiServer = application["apiserver"]
-        apiKey = application["apikey"]
-        apiSecret = application["apisecret"]
-        api = API(srv = apiServer, key = apiKey, secret = apiSecret, timeout = 5, max_retries = 0, retry_delay = 0)
-        self.echo.out(u"App: %s." % str(application["name"]))
-    
-        # Configure data storage directory
-        fppBaseDir = "../../data/fpp"
-        fppDataDir = os.path.join(fppBaseDir, str(resourceID % 1000), str(resourceID))
-        if not os.path.exists(fppDataDir): os.makedirs(fppDataDir)
-        
-        # Load user feed file
-        feedsBaseDir = "../../data/feeds"
-        feedsFilePath = os.path.join(feedsBaseDir, str(resourceID % 1000), "%s.feed" % resourceID)
-        with open(feedsFilePath, "r") as feedFile: feed = json.load(feedFile)
-        
-        # Get random media sample to collect
-        feedSampleSize = 10
-        feedList = random.sample(feed, min(len(feed), feedSampleSize))
-        
-        # Initialize return variables
-        extraInfo = {"mediaerrors": [], "usersok": [], "userserrors": []}
-        
-        # Execute collection
-        attributes = ["gender", "age", "race", "smiling", "glass", "pose"]
-        for i, media in enumerate(feedList):
-            self.echo.out(u"Collecting media %d." % (i + 1))
-            try:
-                response = api.detection.detect(url = media["images"]["low_resolution"]["url"], attribute = attributes)
-            except Exception as error: 
-                # HTTP error codes: http://www.faceplusplus.com/detection_detect/
-                if isinstance(error, APIError): message = "%d: %s" % (error.code, json.loads(error.body)["error"])
-                # socket.error and urllib2.URLError 
-                else: message = str(error)
-                extraInfo["mediaerrors"].append((media["id"], {"error": message}))
-                extraInfo["userserrors"].append((resourceID, None))
-            else:
-                fppFilePath = os.path.join(fppDataDir, "%s.fpp" % media["id"])
-                with open(fppFilePath, "w") as fppFile: json.dump(response, fppFile)
-                    
-        extraInfo["usersok"].append((resourceID, None))
-        return (None, extraInfo, None)
-      
