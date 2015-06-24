@@ -5,7 +5,6 @@ import json
 import random
 import stat
 import common
-import mysql.connector
 from fpp.facepp import API
 from fpp.facepp import APIError
 
@@ -24,14 +23,6 @@ class BaseCrawler:
         
         
 class FPPCrawlerDB(BaseCrawler):
-    def __init__(self, configurationsDictionary):
-        BaseCrawler.__init__(self, configurationsDictionary)
-        self.connection = mysql.connector.connect(**self.config["connargs"])
-        
-        # Queries
-        self.insertFaces = "INSERT INTO `faces` (`media_pk_ref`, `gender_value`, `gender_confidence`, `age_value`, `age_range`, `smiling_value`) VALUES (%s, %s, %s, %s, %s, %s)"
-        self.insertProfileFaces = "INSERT INTO `profile_faces` (`user_id`, `from_table`, `gender_value`, `gender_confidence`, `age_value`, `age_range`, `smiling_value`) VALUES (%s, %s, %s, %s, %s, %s, %s)"
-
     def crawl(self, resourceID, filters):      
         # Configure FPP file path
         fppBaseDir = "../../data-cosn/fpp"
@@ -39,7 +30,8 @@ class FPPCrawlerDB(BaseCrawler):
         if len(fppHashID) > 1: fppSubDir = os.path.join("media", str(int(fppHashID[1]) % 1000)) # Feed picture
         else: fppSubDir = os.path.join("profiles", str(int(fppHashID[0]) % 1000)) # Profile picture
         fppDataDir = os.path.join(fppBaseDir, fppSubDir)
-        if not os.path.exists(fppDataDir): os.makedirs(fppDataDir)
+        try: os.makedirs(fppDataDir)
+        except OSError: pass
         fppFilePath = os.path.join(fppDataDir, "%s.fpp" % resourceID)
         
         # Extract filters
@@ -50,6 +42,9 @@ class FPPCrawlerDB(BaseCrawler):
             fromTable = filters[0]["data"]["from_table"]
             imageURL = filters[0]["data"]["profile_picture"]
         application = filters[1]["data"]["application"]
+        
+        # Initialize return variable
+        extraInfo = {"MySQLBatchInsertFilter": []}
         
         # Get FPP response
         if os.path.isfile(fppFilePath): 
@@ -73,26 +68,24 @@ class FPPCrawlerDB(BaseCrawler):
                 # socket.error and urllib2.URLError 
                 else: message = str(error)
                 resourceInfo = {"error": message}
-                return (resourceInfo, None, None)
+                return (resourceInfo, extraInfo, None)
             else: 
                 with open(fppFilePath, "w") as fppFile: json.dump(response, fppFile)
                 os.chmod(fppFilePath, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IWGRP | stat.S_IROTH)
             
-        # Insert faces into database
-        data = []
+        # Send faces information back to batch insert filter
         for face in response["face"]:
-            if len(fppHashID) > 1: data.append((mediaPK, face["attribute"]["gender"]["value"], face["attribute"]["gender"]["confidence"], face["attribute"]["age"]["value"], face["attribute"]["age"]["range"], face["attribute"]["smiling"]["value"]))
-            else: data.append((resourceID, fromTable, face["attribute"]["gender"]["value"], face["attribute"]["gender"]["confidence"], face["attribute"]["age"]["value"], face["attribute"]["age"]["range"], face["attribute"]["smiling"]["value"]))
-        if data: 
-            cursor = self.connection.cursor()
-            cursor.execute("SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci")
-            if len(fppHashID) > 1: cursor.executemany(self.insertFaces, data)
-            else: cursor.executemany(self.insertProfileFaces, data)
-            self.connection.commit()
-            cursor.close()
+            if len(fppHashID) > 1: faceInfo = {"media_pk_ref": mediaPK}
+            else: faceInfo = {"user_id": resourceID, "from_table": fromTable}
+            faceInfo["gender_value"] = face["attribute"]["gender"]["value"]
+            faceInfo["gender_confidence"] = face["attribute"]["gender"]["confidence"]
+            faceInfo["age_value"] = face["attribute"]["age"]["value"]
+            faceInfo["age_range"] = face["attribute"]["age"]["range"]
+            faceInfo["smiling_value"] = face["attribute"]["smiling"]["value"]
+            extraInfo["MySQLBatchInsertFilter"].append(faceInfo)
         
         resourceInfo = {"faces_count": len(response["face"])}
-        return (resourceInfo, None, None)        
+        return (resourceInfo, extraInfo, None)        
         
         
 class FPPCrawlerFile(BaseCrawler):
@@ -103,7 +96,8 @@ class FPPCrawlerFile(BaseCrawler):
         if len(fppHashID) > 1: fppSubDir = os.path.join("media", str(int(fppHashID[1]) % 1000)) # Feed picture
         else: fppSubDir = os.path.join("profiles", str(int(fppHashID[0]) % 1000)) # Profile picture
         fppDataDir = os.path.join(fppBaseDir, fppSubDir)
-        if not os.path.exists(fppDataDir): os.makedirs(fppDataDir)
+        try: os.makedirs(fppDataDir)
+        except OSError: pass
         fppFilePath = os.path.join(fppDataDir, "%s.fpp" % resourceID)
         
         # Initialize return variables

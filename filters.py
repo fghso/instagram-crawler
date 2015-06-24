@@ -58,7 +58,6 @@ class MySQLBatchInsertFilter(BaseFilter):
         BaseFilter.__init__(self, configurationsDictionary)
         self.echo = common.EchoHandler()
         self.insertThreadExceptionEvent = threading.Event()
-        self.stopInsertThreadEvent = threading.Event()
         
         # Get column names
         query = "SELECT * FROM " + self.config["table"] + " LIMIT 0"
@@ -124,18 +123,18 @@ class MySQLBatchInsertFilter(BaseFilter):
         
     def _insertThread(self):
         try: 
-            while not self.stopInsertThreadEvent.is_set():
-                try: self.batchList.append(self.batchQueue.get_nowait())
-                except Queue.Empty: continue
+            while True:
+                batchInfo = self.batchQueue.get()
+                if not batchInfo: break
+                self.batchList.append(batchInfo)
                 if (len(self.batchList) >= self.config["trigger"]): self._insertQuery()
-            self.stopInsertThreadEvent.clear()
         except: 
             self.insertThreadExceptionEvent.set()
             self.echo.out("[Table: %s] Exception while inserting a batch." % self.config["table"], "EXCEPTION")
 
     def shutdown(self):
-        self.stopInsertThreadEvent.set()
-        while self.stopInsertThreadEvent.is_set(): pass
+        self.batchQueue.put(None)
+        while not self.batchQueue.empty(): pass
         if self.batchList: self._insertQuery()
         
     
