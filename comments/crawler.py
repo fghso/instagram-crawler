@@ -47,7 +47,8 @@ class CommentsCrawler(BaseCrawler):
         # Configure data storage directory
         commentsBaseDir = "../../data/comments"
         commentsDataDir = os.path.join(commentsBaseDir, str(resourceID % 1000))
-        if not os.path.exists(commentsDataDir): os.makedirs(commentsDataDir)
+        try: os.makedirs(commentsDataDir)
+        except OSError: pass
         
         # Load user feed file
         feedsBaseDir = "../../data/feeds"

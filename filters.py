@@ -58,8 +58,7 @@ class MySQLBatchInsertFilter(BaseFilter):
         BaseFilter.__init__(self, configurationsDictionary)
         self.echo = common.EchoHandler()
         self.insertThreadExceptionEvent = threading.Event()
-        self.shutdownEvent = threading.Event()
-        self.insertWaitCondition = threading.Condition()
+        self.stopInsertThreadEvent = threading.Event()
         
         # Get column names
         query = "SELECT * FROM " + self.config["table"] + " LIMIT 0"
@@ -72,42 +71,44 @@ class MySQLBatchInsertFilter(BaseFilter):
         connection.close()
         
         # Start insert thread
-        self.resourcesQueue = Queue.Queue()
+        self.batchQueue = Queue.Queue()
+        self.batchList = []
         t = threading.Thread(target = self._insertThread)
         t.daemon = True
         t.start()
         
     def _extractConfig(self, configurationsDictionary):
         BaseFilter._extractConfig(self, configurationsDictionary)
-        if ("batchsize" not in self.config): raise KeyError("Parameter 'batchsize' must be specified.")
-        else: self.config["batchsize"] = int(self.config["batchsize"])
-        if (self.config["batchsize"] < 1): raise ValueError("Parameter 'batchsize' must be greater than zero.")
+        if ("trigger" not in self.config): raise KeyError("Parameter 'trigger' must be specified.")
+        else: self.config["trigger"] = int(self.config["trigger"])
+        if (self.config["trigger"] < 1): raise ValueError("Parameter 'trigger' must be greater than zero.")
         if ("onduplicateupdate" not in self.config): self.config["onduplicateupdate"] = False
         else: self.config["onduplicateupdate"] = common.str2bool(self.config["onduplicateupdate"])
     
     def callback(self, resourceID, resourceInfo, newResources, extraInfo): 
         if self.insertThreadExceptionEvent.is_set(): raise RuntimeError("Exception in batch insert thread. Execution of MySQLBatchInsertFilter aborted.") 
-        extraResources = extraInfo["original"][self.name]
-        if not extraResources: return
-        for resource in extraResources: self.resourcesQueue.put(resource)
-        with self.insertWaitCondition: self.insertWaitCondition.notify()
+        batchData = extraInfo["original"][self.name]
+        self.batchQueue.put((resourceID, batchData))
         
     def _insertQuery(self):
-        if self.resourcesQueue.empty(): return
+        self.echo.out("[Table: %s] Inserting batch..." % self.config["table"])
         query = "INSERT INTO " + self.config["table"] + " (" + ", ".join(self.colNames) + ") VALUES "
         
         data = []
         values = []
-        for i in range(self.config["batchsize"]): 
-            try: resource = self.resourcesQueue.get_nowait()
-            except Queue.Empty: break
-            resourceValues = []
-            for column in self.colNames:
-                if (column in resource): 
-                    resourceValues.append("%s")
-                    data.append(resource[column])
-                else: resourceValues.append("DEFAULT")
-            values.append("(" + ", ".join(resourceValues) + ")") 
+        batchSize = 0
+        for i in range(self.config["trigger"]): 
+            if not self.batchList: break
+            (resourceID, batchData) = self.batchList.pop()
+            batchSize += len(batchData)
+            for row in batchData:
+                rowValues = []
+                for column in self.colNames:
+                    if (column in row): 
+                        rowValues.append("%s")
+                        data.append(row[column])
+                    else: rowValues.append("DEFAULT")
+                values.append("(" + ", ".join(rowValues) + ")") 
             
         query += ", ".join(values)
         if (self.config["onduplicateupdate"]):
@@ -119,24 +120,23 @@ class MySQLBatchInsertFilter(BaseFilter):
         connection.commit()
         cursor.close()
         connection.close()
+        self.echo.out("[Table: %s] %d rows inserted." % (self.config["table"], batchSize))
         
     def _insertThread(self):
         try: 
-            with self.insertWaitCondition:
-                while not self.shutdownEvent.is_set():
-                    if (self.resourcesQueue.qsize() >= self.config["batchsize"]): self._insertQuery()
-                    else: self.insertWaitCondition.wait()
-                self.insertWaitCondition.notify()
+            while not self.stopInsertThreadEvent.is_set():
+                try: self.batchList.append(self.batchQueue.get_nowait())
+                except Queue.Empty: continue
+                if (len(self.batchList) >= self.config["trigger"]): self._insertQuery()
+            self.stopInsertThreadEvent.clear()
         except: 
             self.insertThreadExceptionEvent.set()
-            self.echo.out("Exception while inserting a batch of resources.", "EXCEPTION")
+            self.echo.out("[Table: %s] Exception while inserting a batch." % self.config["table"], "EXCEPTION")
 
     def shutdown(self):
-        with self.insertWaitCondition:
-            self.shutdownEvent.set()
-            self.insertWaitCondition.notify()
-            self.insertWaitCondition.wait()
-        self._insertQuery()
+        self.stopInsertThreadEvent.set()
+        while self.stopInsertThreadEvent.is_set(): pass
+        if self.batchList: self._insertQuery()
         
     
 class FppAppFilter(BaseFilter):
@@ -150,7 +150,7 @@ class FppAppFilter(BaseFilter):
         BaseFilter._extractConfig(self, configurationsDictionary)
         self.config["appsfile"] = self.config["appsfile"].encode("utf-8")
         self.config["maxapprequests"] = int(self.config["maxapprequests"])
-        if (self.config["maxapprequests"] < 0): raise ValueError("Parameter 'maxapprequests' must be greater than or equal to zero. Zero means no boundary on the number of requests.")
+        #if (self.config["maxapprequests"] < 0): raise ValueError("Parameter 'maxapprequests' must be greater than or equal to zero. Zero means no boundary on the number of requests.")
         
     def _loadAppFile(self):
         # Open file
@@ -179,7 +179,7 @@ class FppAppFilter(BaseFilter):
         
     def apply(self, resourceID, resourceInfo, extraInfo):
         self.local.application = self.applicationsQueue.get()
-        if (self.config["maxapprequests"] == 0): self.applicationsQueue.put(self.local.application)
+        if (self.config["maxapprequests"] <= 0): self.applicationsQueue.put(self.local.application)
         return {"application": self.local.application}
         
     def callback(self, resourceID, resourceInfo, newResources, extraInfo):
@@ -202,7 +202,7 @@ class InstagramAppFilter(BaseFilter):
         #self.config["dynamicallyload"] = common.str2bool(self.config["dynamicallyload"])
         self.config["resetpercent"] = float(self.config["resetpercent"]) / 100
         self.config["sleeptime"] = int(self.config["sleeptime"])
-        if (self.config["sleeptime"] < 1): raise ValueError("Parameter 'sleeptime' must be greater than 1 second.")
+        if (self.config["sleeptime"] < 1): raise ValueError("Parameter 'sleeptime' must be greater than or equal to 1 second.")
         
     def setup(self): self.local.lastAppName = None
         
@@ -217,7 +217,7 @@ class InstagramAppFilter(BaseFilter):
             if (self.config["method"] == "maxpost"):
                 percentZeroAppRates = float(len(self.zeroAppRates)) / len(self.appRates)
                 if (percentZeroAppRates > self.config["resetpercent"]):
-                    self.echo.out(u"Maximum number of applications with ratelimit exceeded hit, making requests now to check actual ratelimits.", "WARNING")
+                    self.echo.out(u"Maximum number of applications with ratelimit exceeded reached, making requests now to check actual ratelimits.", "WARNING")
                     for appName in self.zeroAppRates[:]:
                         appIndex = self.appIndexes[appName]
                         self.appRates[appName] = self._getAppRate(self.applicationList[appIndex])

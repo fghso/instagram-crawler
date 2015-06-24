@@ -50,8 +50,10 @@ class RelationshipsCrawler(BaseCrawler):
         followedbyBaseDir = "../../data/relationships/followedby"
         followsDataDir = os.path.join(followsBaseDir, str(resourceID % 1000))
         followedbyDataDir = os.path.join(followedbyBaseDir, str(resourceID % 1000))
-        if not os.path.exists(followsDataDir): os.makedirs(followsDataDir)
-        if not os.path.exists(followedbyDataDir): os.makedirs(followedbyDataDir)
+        try: 
+            os.makedirs(followsDataDir)
+            os.makedirs(followedbyDataDir)
+        except OSError: pass
         
         # Initialize return variables
         responseCode = 3

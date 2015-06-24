@@ -36,7 +36,8 @@ class ImagesCrawler(BaseCrawler):
         # Configure data storage directory
         imagesBaseDir = "../../data/images"
         imagesDataDir = os.path.join(imagesBaseDir, str(resourceID % 1000))
-        if not os.path.exists(imagesDataDir): os.makedirs(imagesDataDir)
+        try: os.makedirs(imagesDataDir)
+        except OSError: pass
         
         # Load user feed file
         feedsBaseDir = "../../data/feeds"

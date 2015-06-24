@@ -50,7 +50,8 @@ class FeedsCrawler(BaseCrawler):
         # Configure data storage directory
         feedsBaseDir = "../../data/feeds"
         feedsDataDir = os.path.join(feedsBaseDir, str(resourceID % 1000))
-        if not os.path.exists(feedsDataDir): os.makedirs(feedsDataDir)
+        try: os.makedirs(feedsDataDir)
+        except OSError: pass
         
         # Configure minimum media timestamp
         #timeInterval = datetime.utcnow() - timedelta(90)
