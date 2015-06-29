@@ -67,7 +67,7 @@ class FPPCrawlerDB(BaseCrawler):
                 if isinstance(error, APIError): message = "%d: %s" % (error.code, json.loads(error.body)["error"])
                 # socket.error and urllib2.URLError 
                 else: message = str(error)
-                resourceInfo = {"error": message}
+                resourceInfo = {"faces_count": -1, "error": message}
                 return (resourceInfo, extraInfo, None)
             else: 
                 with open(fppFilePath, "w") as fppFile: json.dump(response, fppFile)
@@ -84,7 +84,7 @@ class FPPCrawlerDB(BaseCrawler):
             faceInfo["smiling_value"] = face["attribute"]["smiling"]["value"]
             extraInfo["MySQLBatchInsertFilter"].append(faceInfo)
         
-        resourceInfo = {"faces_count": len(response["face"])}
+        resourceInfo = {"faces_count": len(response["face"]), "error": None}
         return (resourceInfo, extraInfo, None)        
         
         

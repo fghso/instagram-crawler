@@ -4,7 +4,6 @@ import sys
 import os
 import threading
 import httplib2
-import time
 import json
 import csv
 import xmltodict
@@ -108,17 +107,19 @@ class MySQLBatchInsertFilter(BaseFilter):
                         data.append(row[column])
                     else: rowValues.append("DEFAULT")
                 values.append("(" + ", ".join(rowValues) + ")") 
-            
-        query += ", ".join(values)
-        if (self.config["onduplicateupdate"]):
-            query += " ON DUPLICATE KEY UPDATE " + ", ".join(["{0} = VALUES({0})".format(column) for column in self.colNames])
         
-        connection = mysql.connector.connect(**self.config["connargs"])
-        cursor = connection.cursor()
-        cursor.execute(query, data)
-        connection.commit()
-        cursor.close()
-        connection.close()
+        if batchSize:        
+            query += ", ".join(values)
+            if (self.config["onduplicateupdate"]):
+                query += " ON DUPLICATE KEY UPDATE " + ", ".join(["{0} = VALUES({0})".format(column) for column in self.colNames])
+        
+            connection = mysql.connector.connect(**self.config["connargs"])
+            cursor = connection.cursor()
+            cursor.execute(query, data)
+            connection.commit()
+            cursor.close()
+            connection.close()
+            
         self.echo.out("[Table: %s] %d rows inserted." % (self.config["table"], batchSize))
         
     def _insertThread(self):
@@ -149,7 +150,6 @@ class FppAppFilter(BaseFilter):
         BaseFilter._extractConfig(self, configurationsDictionary)
         self.config["appsfile"] = self.config["appsfile"].encode("utf-8")
         self.config["maxapprequests"] = int(self.config["maxapprequests"])
-        #if (self.config["maxapprequests"] < 0): raise ValueError("Parameter 'maxapprequests' must be greater than or equal to zero. Zero means no boundary on the number of requests.")
         
     def _loadAppFile(self):
         # Open file
@@ -190,61 +190,50 @@ class InstagramAppFilter(BaseFilter):
         BaseFilter.__init__(self, configurationsDictionary)
         self.httpObj = httplib2.Http(disable_ssl_certificate_validation = True)
         self.echo = common.EchoHandler()
-        self.appRates = {}
-        self.zeroAppRates = []
-        self.local = threading.local()
+        self.manageAppThreadExceptionEvent = threading.Event()
+        self.appQueue = Queue.Queue()
         self._loadAppFile()
+        
+        # Start manage app thread
+        t = threading.Thread(target = self._manageAppThread)
+        t.daemon = True
+        t.start()
+        self.appQueue.get()
+        self.appQueue.task_done()
         
     def _extractConfig(self, configurationsDictionary):
         BaseFilter._extractConfig(self, configurationsDictionary)
         self.config["appsfile"] = self.config["appsfile"].encode("utf-8")
-        #self.config["dynamicallyload"] = common.str2bool(self.config["dynamicallyload"])
-        self.config["resetpercent"] = float(self.config["resetpercent"]) / 100
-        self.config["sleeptime"] = int(self.config["sleeptime"])
-        if (self.config["sleeptime"] < 1): raise ValueError("Parameter 'sleeptime' must be greater than or equal to 1 second.")
-        
-    def setup(self): self.local.lastAppName = None
+        self.config["rateuse"] = int(self.config["rateuse"])
+        if (self.config["rateuse"] < 1): raise ValueError("Parameter 'rateuse' must be greater than or equal to 1.")
         
     def apply(self, resourceID, resourceInfo, extraInfo):
-        #if (self.config["dynamicallyload"]): self._loadAppFile()
-        
         if (self.config["method"] == "random"): 
-            appIndex = random.randint(0, len(self.applicationList) - 1)
-        else: 
-            maxRate = 0
-            appIndex = None
-            if (self.config["method"] == "maxpost"):
-                percentZeroAppRates = float(len(self.zeroAppRates)) / len(self.appRates)
-                if (percentZeroAppRates > self.config["resetpercent"]):
-                    self.echo.out(u"Maximum number of applications with ratelimit exceeded reached, making requests now to check actual ratelimits.", "WARNING")
-                    for appName in self.zeroAppRates[:]:
-                        appIndex = self.appIndexes[appName]
-                        self.appRates[appName] = self._getAppRate(self.applicationList[appIndex])
-                        self.zeroAppRates.remove(appName)
-                for appName, rateRemaining in self.appRates.iteritems():
-                    if (rateRemaining > maxRate) and (appName != self.local.lastAppName):
-                        maxRate = rateRemaining
-                        appIndex = self.appIndexes[appName]
-                self.local.lastAppName = self.applicationList[appIndex]["name"]
-            else: 
-                while (True):
-                    for i, application in enumerate(self.applicationList):
-                        rateRemaining = self._getAppRate(application)
-                        if (rateRemaining > maxRate): 
-                            maxRate = rateRemaining
-                            appIndex = i
-                    if (maxRate == 0): 
-                        self.echo.out(u"Ratelimit of all applications exceeded, sleeping now for %d seconds..." % self.config["sleeptime"], "WARNING")
-                        time.sleep(self.config["sleeptime"])
-                    else: break
-                    
-        return {"application": self.applicationList[appIndex]}
-        
-    def callback(self, resourceID, resourceInfo, newResources, extraInfo):
-        appName = extraInfo["original"][self.name]["appname"]
-        appRate = extraInfo["original"][self.name]["apprate"]
-        if (appRate == 0): self.zeroAppRates.append(appName)
-        elif (appRate is not None): self.appRates[appName] = appRate
+            appIndex = random.randint(0, len(self.appList) - 1)
+            appInfo = self.appList[appIndex]
+        elif (self.config["method"] == "roundrobin"): 
+            if self.manageAppThreadExceptionEvent.is_set(): raise RuntimeError("Exception in manage app thread. Execution of InstagramAppFilter aborted.")
+            appInfo = self.appQueue.get()
+            self.appQueue.task_done()
+        else: raise ValueError("Unknown value '%' for parameter 'method'." % self.config["method"])
+        return {"application": appInfo}
+                
+    def _manageAppThread(self):
+        try: 
+            currentAppIndex = -1
+            currentAppRate = -1
+            while True:
+                if (currentAppRate > self.config["rateuse"]):
+                    self.appQueue.put(self.appList[currentAppIndex])
+                    currentAppRate -= self.config["rateuse"]
+                    self.appQueue.join()
+                else:
+                    currentAppIndex = currentAppIndex + 1 if (currentAppIndex < len(self.appList) - 1) else 0
+                    currentAppRate = self._getAppRate(self.appList[currentAppIndex])
+                    if (currentAppRate > 0): self.echo.out("Using %s (rate remaining: %d)." % (self.appList[currentAppIndex]["name"], currentAppRate))
+        except: 
+            self.manageAppThreadExceptionEvent.set()
+            self.echo.out("Exception while managing application distribution.", "EXCEPTION")
         
     def _loadAppFile(self):
         # Open file
@@ -257,22 +246,14 @@ class InstagramAppFilter(BaseFilter):
         fileType = os.path.splitext(self.config["appsfile"])[1][1:].lower()
         if (fileType == "xml"):
             appDict = xmltodict.parse(appsFile.read())
-            self.applicationList = appDict["instagram"]["application"] if isinstance(appDict["instagram"]["application"], list) else [appDict["instagram"]["application"]]
+            self.appList = appDict["instagram"]["application"] if isinstance(appDict["instagram"]["application"], list) else [appDict["instagram"]["application"]]
         elif (fileType == "json"):
-            self.applicationList = json.load(appsFile)["application"]
+            self.appList = json.load(appsFile)["application"]
         elif (fileType == "csv"):
             reader = csv.DictReader(appsFile, quoting = csv.QUOTE_NONE)
-            self.applicationList = list(reader)
+            self.appList = list(reader)
         else: raise TypeError("Unknown file type '%s'." % self.selectConfig["filename"])
         
-        # Build indexes and rates lists
-        self.appIndexes = {}
-        for i, application in enumerate(self.applicationList):
-            self.appIndexes[application["name"]] = i
-            if (self.config["method"] == "maxpost") and (application["name"] not in self.appRates): 
-                self.appRates[application["name"]] = self._getAppRate(application)
-        
-        # Close file
         appsFile.close()
     
     def _getAppRate(self, application):
@@ -295,28 +276,24 @@ class InstagramAppFilter(BaseFilter):
     def _spendRandomRate(self, repeat):
         httpObj = httplib2.Http(disable_ssl_certificate_validation=True)
         for i in range(1, repeat + 1):
-            appIndex = random.randint(0, len(self.applicationList) - 1)
-            clientID = self.applicationList[appIndex]["clientid"]
+            appIndex = random.randint(0, len(self.appList) - 1)
+            clientID = self.appList[appIndex]["clientid"]
             (header, content) = httpObj.request("https://api.instagram.com/v1/tags/selfie?client_id=%s" % clientID, "GET")
-            print "%d: " % i, self.applicationList[appIndex]["name"], header["x-ratelimit-remaining"]
+            print "%d: " % i, self.appList[appIndex]["name"], header["x-ratelimit-remaining"]
             
-    def _spendSpecificRate(self, appName, repeat):
-        appIndex = self.appIndexes[appName]
+    def _spendSpecificRate(self, appIndex, repeat):
         httpObj = httplib2.Http(disable_ssl_certificate_validation=True)
         for i in range(1, repeat + 1):
-            clientID = self.applicationList[appIndex]["clientid"]
+            clientID = self.appList[appIndex]["clientid"]
             (header, content) = httpObj.request("https://api.instagram.com/v1/tags/selfie?client_id=%s" % clientID, "GET")
-            print "%d: " % i, self.applicationList[appIndex]["name"], header["x-ratelimit-remaining"]#, content 
+            print "%d: " % i, self.appList[appIndex]["name"], header["x-ratelimit-remaining"]#, content 
 
             
 # ====== Tests ===== 
 if __name__ == "__main__":
     #print InstagramAppFilter()._spendRandomRate(50)
-    #print InstagramAppFilter()._spendSpecificRate("CampsApp1", 1)
-    print InstagramAppFilter({"name": None, 
-                              "appsfile": "apps.csv", 
-                              #"dynamicallyload": "False",
-                              "method": "maxpost", # random, maxpost or maxpre
-                              "resetpercent": 50,
-                              "sleeptime": 60}).apply(None, None, None)
+    #print InstagramAppFilter()._spendSpecificRate(0, 1)
+    print InstagramAppFilter({"appsfile": "inout\instagramapps.csv", 
+                              "method": "roundrobin", # random or roundrobin
+                              "rateuse": 1}).apply(None, None, None)
                               
