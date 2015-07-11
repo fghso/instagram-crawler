@@ -1,7 +1,7 @@
 # -*- coding: iso-8859-1 -*-
 
 import os
-import socket
+#import socket
 import json
 import time
 import urllib2

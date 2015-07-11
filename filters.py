@@ -190,21 +190,25 @@ class InstagramAppFilter(BaseFilter):
         BaseFilter.__init__(self, configurationsDictionary)
         self.httpObj = httplib2.Http(disable_ssl_certificate_validation = True)
         self.echo = common.EchoHandler()
-        self.manageAppThreadExceptionEvent = threading.Event()
-        self.appQueue = Queue.Queue()
         self._loadAppFile()
         
         # Start manage app thread
-        t = threading.Thread(target = self._manageAppThread)
-        t.daemon = True
-        t.start()
-        self.appQueue.get()
-        self.appQueue.task_done()
+        if (self.config["method"] == "roundrobin"):
+            self.manageAppThreadExceptionEvent = threading.Event()
+            self.appQueue = Queue.Queue()
+            t = threading.Thread(target = self._manageAppThread)
+            t.daemon = True
+            t.start()
+            self.appQueue.get()
+            self.appQueue.task_done()
         
     def _extractConfig(self, configurationsDictionary):
         BaseFilter._extractConfig(self, configurationsDictionary)
         self.config["appsfile"] = self.config["appsfile"].encode("utf-8")
-        self.config["rateuse"] = int(self.config["rateuse"])
+        if (self.config["method"] != "random") and (self.config["method"] != "roundrobin"):
+            raise ValueError("Unknown value '%' for parameter 'method'." % self.config["method"])
+        if ("rateuse" in self.config): self.config["rateuse"] = int(self.config["rateuse"])
+        else: self.config["rateuse"] = 1
         if (self.config["rateuse"] < 1): raise ValueError("Parameter 'rateuse' must be greater than or equal to 1.")
         
     def apply(self, resourceID, resourceInfo, extraInfo):
@@ -215,15 +219,14 @@ class InstagramAppFilter(BaseFilter):
             if self.manageAppThreadExceptionEvent.is_set(): raise RuntimeError("Exception in manage app thread. Execution of InstagramAppFilter aborted.")
             appInfo = self.appQueue.get()
             self.appQueue.task_done()
-        else: raise ValueError("Unknown value '%' for parameter 'method'." % self.config["method"])
         return {"application": appInfo}
-                
+        
     def _manageAppThread(self):
         try: 
-            currentAppIndex = -1
+            currentAppIndex = random.randint(0, len(self.appList) - 1)
             currentAppRate = -1
             while True:
-                if (currentAppRate > self.config["rateuse"]):
+                if (currentAppRate >= self.config["rateuse"]):
                     self.appQueue.put(self.appList[currentAppIndex])
                     currentAppRate -= self.config["rateuse"]
                     self.appQueue.join()
@@ -274,18 +277,16 @@ class InstagramAppFilter(BaseFilter):
                 
     # Methods for tests
     def _spendRandomRate(self, repeat):
-        httpObj = httplib2.Http(disable_ssl_certificate_validation=True)
         for i in range(1, repeat + 1):
             appIndex = random.randint(0, len(self.appList) - 1)
             clientID = self.appList[appIndex]["clientid"]
-            (header, content) = httpObj.request("https://api.instagram.com/v1/tags/selfie?client_id=%s" % clientID, "GET")
+            (header, content) = self.httpObj.request("https://api.instagram.com/v1/tags/selfie?client_id=%s" % clientID, "GET")
             print "%d: " % i, self.appList[appIndex]["name"], header["x-ratelimit-remaining"]
             
     def _spendSpecificRate(self, appIndex, repeat):
-        httpObj = httplib2.Http(disable_ssl_certificate_validation=True)
         for i in range(1, repeat + 1):
             clientID = self.appList[appIndex]["clientid"]
-            (header, content) = httpObj.request("https://api.instagram.com/v1/tags/selfie?client_id=%s" % clientID, "GET")
+            (header, content) = self.httpObj.request("https://api.instagram.com/v1/tags/selfie?client_id=%s" % clientID, "GET")
             print "%d: " % i, self.appList[appIndex]["name"], header["x-ratelimit-remaining"]#, content 
 
             

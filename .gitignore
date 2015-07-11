@@ -64,6 +64,7 @@ json2mysql/auxiliary
 *.json
 *.csv
 *.txt
+*.cnf
 fabfile.py
 
 

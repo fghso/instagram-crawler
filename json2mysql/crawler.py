@@ -39,7 +39,7 @@ class FeedsImporter(BaseCrawler):
         self.echo.out(u"User ID received: %s." % resourceID)
         
         # Load user feed file
-        feedsBaseDir = "../../data-cosn/feeds"
+        feedsBaseDir = "../../data-update/feeds"
         feedsFilePath = os.path.join(feedsBaseDir, str(int(resourceID) % 1000), "%s.feed" % resourceID)
         with open(feedsFilePath, "r") as feedFile: feed = json.load(feedFile)
         

@@ -1,12 +1,13 @@
 # -*- coding: iso-8859-1 -*-
 
 import os
-import socket
+#import socket
 import json
 import time
+import stat
 import common
-from datetime import datetime
-from datetime import timedelta
+#from datetime import datetime
+#from datetime import timedelta
 from instagram.client import InstagramAPI
 from instagram.bind import InstagramAPIError
 from instagram.bind import InstagramClientError
@@ -24,8 +25,55 @@ class BaseCrawler:
     def crawl(self, resourceID, filters):
         return (None, None, None)
 
+        
+class FeedsCrawlerDB(BaseCrawler):
+    def crawl(self, resourceID, filters):      
+        # Extract filters
+        application = filters[0]["data"]["application"]
+        self.echo.out(u"ID: %s (App: %s)." % (resourceID, application["name"]))        
+    
+        # Get authenticated API object
+        clientID = str(application["clientid"])
+        clientSecret = str(application["clientsecret"])
+        api = InstagramAPI(client_id = clientID, client_secret = clientSecret)
 
-class FeedsCrawler(BaseCrawler):
+        # Configure data storage directory
+        feedsBaseDir = "../../data-update/feeds"
+        feedsDataDir = os.path.join(feedsBaseDir, str(int(resourceID) % 1000))
+        try: os.makedirs(feedsDataDir)
+        except OSError: pass
+        
+        # Configure min and max timestamps
+        minTimestamp = 1417392000 # = 01 Dec 2014 00:00:00 UTC
+        maxTimestamp = 1435708800 # = 01 Jul 2015 00:00:00 UTC
+        
+        # Execute collection
+        resourceInfo = None
+        feedList = []
+        pageCount = 0
+        nextUserRecentMediaPage = ""
+        while (nextUserRecentMediaPage is not None):
+            pageCount += 1
+            self.echo.out(u"Collecting feed page %d." % pageCount)
+            try:
+                userRecentMedia, nextUserRecentMediaPage = api.user_recent_media(count=35, user_id=resourceID, return_json=True, with_next_url=nextUserRecentMediaPage, min_timestamp=minTimestamp, max_timestamp=maxTimestamp)
+            except (InstagramAPIError, InstagramClientError) as error:
+                if (error.status_code == 400): 
+                    resourceInfo = {"error": error.error_type}
+                    break
+                else: raise
+            else:
+                if (userRecentMedia): feedList.extend(userRecentMedia) 
+                
+        # Save JSON file containing user feed data
+        mediaInfoFilePath = os.path.join(feedsDataDir, "%s.feed" % resourceID)
+        with open(mediaInfoFilePath, "w") as output: json.dump(feedList, output)
+        os.chmod(mediaInfoFilePath, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IWGRP | stat.S_IROTH)
+        
+        return (resourceInfo, None, None)
+                
+
+class FeedsCrawlerFile(BaseCrawler):
     # Response codes:
     #    3 => Successful collection
     #   -4 => APINotAllowedError - you cannot view this resource
