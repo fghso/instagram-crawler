@@ -142,7 +142,7 @@ class MySQLBatchInsertFilter(BaseFilter):
 class FppAppFilter(BaseFilter):
     def __init__(self, configurationsDictionary): 
         BaseFilter.__init__(self, configurationsDictionary)
-        self.applicationsQueue = Queue.Queue()
+        self.appQueue = Queue.Queue()
         self.local = threading.local()
         self._loadAppFile()
 
@@ -162,27 +162,27 @@ class FppAppFilter(BaseFilter):
         fileType = os.path.splitext(self.config["appsfile"])[1][1:].lower()
         if (fileType == "csv"):
             reader = csv.DictReader(appsFile, quoting = csv.QUOTE_NONE)
-            if (self.config["maxapprequests"] < 2): applicationsList = list(reader)
-            else: applicationsList = list(reader) * self.config["maxapprequests"]
+            if (self.config["maxapprequests"] < 2): self.appList = list(reader)
+            else: self.appList = list(reader) * self.config["maxapprequests"]
         else: raise TypeError("Unknown file type '%s'." % self.selectConfig["filename"])
         
-        # Put applications on the queue
-        for app in applicationsList:
+        # Get API servers addresses
+        for app in self.appList:
             server = app["apiserver"].lower()
             if (server == "us"): app["apiserver"] = "http://api.us.faceplusplus.com/"
             elif (server == "cn"): app["apiserver"] = "http://api.cn.faceplusplus.com/"
-            self.applicationsQueue.put(app)
+            if (self.config["maxapprequests"] > 0): self.appQueue.put(app)
         
         # Close file
         appsFile.close()
         
     def apply(self, resourceID, resourceInfo, extraInfo):
-        self.local.application = self.applicationsQueue.get()
-        if (self.config["maxapprequests"] <= 0): self.applicationsQueue.put(self.local.application)
+        if (self.config["maxapprequests"] > 0): self.local.application = self.appQueue.get()
+        else: self.local.application = self.appList[random.randint(0, len(self.appList) - 1)]
         return {"application": self.local.application}
         
     def callback(self, resourceID, resourceInfo, newResources, extraInfo):
-        if (self.config["maxapprequests"] > 0): self.applicationsQueue.put(self.local.application)
+        if (self.config["maxapprequests"] > 0): self.appQueue.put(self.local.application)
         
         
 class InstagramAppFilter(BaseFilter):
@@ -222,18 +222,26 @@ class InstagramAppFilter(BaseFilter):
         return {"application": appInfo}
         
     def _manageAppThread(self):
+        # try: 
+            # currentAppIndex = random.randint(0, len(self.appList) - 1)
+            # currentAppRate = -1
+            # while True:
+                # if (currentAppRate >= self.config["rateuse"]):
+                    # currentAppRate -= self.config["rateuse"]
+                    # self.appQueue.put(self.appList[currentAppIndex])
+                    # self.appQueue.join()
+                # else:
+                    # currentAppIndex = currentAppIndex + 1 if (currentAppIndex < len(self.appList) - 1) else 0
+                    # currentAppRate = self._getAppRate(self.appList[currentAppIndex])
+                    # if (currentAppRate > 0): self.echo.out("Using %s (rate remaining: %d)." % (self.appList[currentAppIndex]["name"], currentAppRate))
         try: 
             currentAppIndex = random.randint(0, len(self.appList) - 1)
-            currentAppRate = -1
             while True:
-                if (currentAppRate >= self.config["rateuse"]):
-                    self.appQueue.put(self.appList[currentAppIndex])
-                    currentAppRate -= self.config["rateuse"]
-                    self.appQueue.join()
-                else:
-                    currentAppIndex = currentAppIndex + 1 if (currentAppIndex < len(self.appList) - 1) else 0
-                    currentAppRate = self._getAppRate(self.appList[currentAppIndex])
-                    if (currentAppRate > 0): self.echo.out("Using %s (rate remaining: %d)." % (self.appList[currentAppIndex]["name"], currentAppRate))
+                currentAppIndex = currentAppIndex + 1 if (currentAppIndex < len(self.appList) - 1) else 0
+                currentAppRate = self._getAppRate(self.appList[currentAppIndex])
+                if (currentAppRate > 0): self.echo.out("Using %s (rate remaining: %d)." % (self.appList[currentAppIndex]["name"], currentAppRate))
+                for i in range(0, currentAppRate / self.config["rateuse"]): self.appQueue.put(self.appList[currentAppIndex])
+                self.appQueue.join()
         except: 
             self.manageAppThreadExceptionEvent.set()
             self.echo.out("Exception while managing application distribution.", "EXCEPTION")

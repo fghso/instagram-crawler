@@ -25,7 +25,8 @@ class BaseCrawler:
 class FPPCrawlerDB(BaseCrawler):
     def crawl(self, resourceID, filters):      
         # Configure FPP file path
-        fppBaseDir = "../../data-update/fpp"
+        #fppBaseDir = "../../data-update/fpp"
+        fppBaseDir = "../../data-cosn/fpp"
         fppHashID = resourceID.split("_")
         if len(fppHashID) > 1: fppSubDir = os.path.join("media", str(int(fppHashID[1]) % 1000)) # Feed picture
         else: fppSubDir = os.path.join("profiles", str(int(fppHashID[0]) % 1000)) # Profile picture
